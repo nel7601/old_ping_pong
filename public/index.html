@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -13,39 +13,39 @@
 <body>
   <canvas id="game"></canvas>
 
-  <!-- Menú principal -->
+  <!-- Main menu -->
   <div id="menu" class="screen">
     <h1 class="title">PONG</h1>
-    <p class="subtitle">1972 &middot; DOS TELEFONOS &middot; UNA MESA</p>
-    <button id="btn-create" class="btn">CREAR PARTIDA</button>
-    <p class="hint">Crea una partida y comparte el enlace<br>con tu rival, este donde este.</p>
+    <p class="subtitle">1972 &middot; TWO PHONES &middot; ONE TABLE</p>
+    <button id="btn-create" class="btn">CREATE GAME</button>
+    <p class="hint">Create a game and share the link<br>with your rival, wherever they are.</p>
     <p id="menu-error" class="error"></p>
   </div>
 
-  <!-- Esperando al rival -->
+  <!-- Waiting for the rival -->
   <div id="waiting" class="screen hidden">
-    <p class="label">ENLACE DE PARTIDA</p>
+    <p class="label">GAME LINK</p>
     <p id="share-url" class="link"></p>
-    <button id="btn-share" class="btn">COMPARTIR ENLACE</button>
-    <button id="btn-copy" class="btn small">COPIAR ENLACE</button>
+    <button id="btn-share" class="btn">SHARE LINK</button>
+    <button id="btn-copy" class="btn small">COPY LINK</button>
     <p id="copy-done" class="error"></p>
-    <p class="hint">Tu rival solo tiene que abrir el enlace.<br>Despues de compartirlo, vuelve a esta pantalla:<br>la partida empezara sola.</p>
-    <p class="blink">ESPERANDO RIVAL...</p>
-    <button id="btn-cancel" class="btn small">CANCELAR</button>
+    <p class="hint">Your rival just has to open the link.<br>After sharing it, come back to this screen:<br>the game will start on its own.</p>
+    <p class="blink">WAITING FOR RIVAL...</p>
+    <button id="btn-cancel" class="btn small">CANCEL</button>
   </div>
 
-  <!-- Uniéndose desde un enlace -->
+  <!-- Joining from a link -->
   <div id="joining" class="screen hidden">
     <p class="title small-title">PONG</p>
-    <p class="blink">CONECTANDO...</p>
+    <p class="blink">CONNECTING...</p>
   </div>
 
-  <!-- Fin de partida / desconexión -->
+  <!-- Game over / disconnection -->
   <div id="over" class="screen hidden">
     <p id="over-title" class="title small-title">GAME OVER</p>
     <p id="over-detail" class="hint"></p>
-    <button id="btn-rematch" class="btn">REVANCHA</button>
-    <button id="btn-exit" class="btn small">SALIR</button>
+    <button id="btn-rematch" class="btn">REMATCH</button>
+    <button id="btn-exit" class="btn small">EXIT</button>
   </div>
 
   <script src="game.js"></script>

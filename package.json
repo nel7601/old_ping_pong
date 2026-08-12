@@ -1,7 +1,7 @@
 {
   "name": "old-ping-pong",
   "version": "1.0.0",
-  "description": "Pong (1972) multijugador para dos teléfonos conectados por internet",
+  "description": "Multiplayer Pong (1972) for two phones connected over the internet",
   "type": "module",
   "main": "server.js",
   "scripts": {
