@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <title>OLD PING PONG</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- Menú principal -->
+  <div id="menu" class="screen">
+    <h1 class="title">PONG</h1>
+    <p class="subtitle">1972 &middot; DOS TELEFONOS &middot; UNA MESA</p>
+    <button id="btn-create" class="btn">CREAR PARTIDA</button>
+    <div class="join-row">
+      <input id="code-input" type="text" maxlength="4" placeholder="CODIGO" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      <button id="btn-join" class="btn">UNIRSE</button>
+    </div>
+    <p id="menu-error" class="error"></p>
+  </div>
+
+  <!-- Esperando al rival -->
+  <div id="waiting" class="screen hidden">
+    <p class="label">CODIGO DE SALA</p>
+    <p id="room-code" class="code">----</p>
+    <p class="hint">Dile este codigo a tu rival.<br>Puede estar en cualquier parte del mundo.</p>
+    <p class="blink">ESPERANDO RIVAL...</p>
+    <button id="btn-cancel" class="btn small">CANCELAR</button>
+  </div>
+
+  <!-- Fin de partida / desconexión -->
+  <div id="over" class="screen hidden">
+    <p id="over-title" class="title small-title">GAME OVER</p>
+    <p id="over-detail" class="hint"></p>
+    <button id="btn-rematch" class="btn">REVANCHA</button>
+    <button id="btn-exit" class="btn small">SALIR</button>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>

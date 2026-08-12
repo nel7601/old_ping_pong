@@ -1,0 +1,17 @@
+{
+  "name": "old-ping-pong",
+  "version": "1.0.0",
+  "description": "Pong (1972) multijugador para dos teléfonos conectados por internet",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@vercel/functions": "^3.1.0",
+    "ws": "^8.18.0"
+  }
+}
