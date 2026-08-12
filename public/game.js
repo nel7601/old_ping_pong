@@ -100,7 +100,7 @@ const sndScore = () => beep(490, 0.25);
 
 function connect(onOpen) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}`);
+  const ws = new WebSocket(`${proto}://${location.host}/api/ws`);
   state.ws = ws;
 
   ws.onopen = onOpen;

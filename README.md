@@ -24,8 +24,10 @@ por internet. Muy simple, muy old fashion: negro, blanco y *beeps*.
 teléfono 1  ──WebSocket──►  servidor (relay + salas)  ◄──WebSocket──  teléfono 2
 ```
 
-- `server.js` — servidor Node.js: sirve el cliente y retransmite los mensajes
-  entre los dos teléfonos de una sala. No simula el juego.
+- `lib/rooms.js` — la lógica de salas y relay (compartida por los dos entornos).
+- `server.js` — servidor Node.js para local o VPS: sirve el cliente y acepta
+  WebSockets en `/api/ws`. No simula el juego.
+- `api/ws.js` — el mismo relay como función de Vercel (WebSockets nativos).
 - `public/` — el cliente: HTML5 canvas con controles táctiles.
 - La **física de la bola la calcula solo el teléfono en cuyo campo está** la
   bola. Al cruzar la red se envía al rival su posición y velocidad (espejadas,
@@ -40,14 +42,31 @@ npm start
 # abre http://localhost:3000 en dos pestañas o dos dispositivos de la misma red
 ```
 
-## Desplegar en internet (para jugar entre distintas redes)
+## Desplegar en Vercel (para jugar entre distintas redes)
 
-Es una app Node.js estándar con un solo puerto (`PORT`), así que se puede
-desplegar tal cual en cualquier servicio como **Render**, **Railway**,
-**Fly.io** o un VPS propio:
+El proyecto ya está preparado para Vercel, que soporta WebSockets de forma
+nativa (beta pública desde junio de 2026, sobre Fluid compute):
 
-1. Sube este repositorio al servicio.
-2. Comando de arranque: `npm start` (el servicio define `PORT` solo).
-3. Comparte la URL resultante (`https://...`) con los dos jugadores.
+1. Entra en [vercel.com](https://vercel.com) e inicia sesión con tu cuenta de GitHub.
+2. **Add New… → Project** e importa el repositorio `old_ping_pong`.
+3. No cambies nada (framework "Other", sin build command) y pulsa **Deploy**.
+4. Comparte la URL resultante (`https://tu-proyecto.vercel.app`) con los dos
+   jugadores y a jugar.
 
+Notas de la beta de WebSockets de Vercel:
+
+- **Fluid compute debe estar activo** (viene activado por defecto en
+  proyectos nuevos: Settings → Functions → Fluid Compute).
+- La conexión dura como máximo `maxDuration` (800 s configurados en
+  `vercel.json`, ~13 min). Si una partida épica llega al límite, la conexión
+  se corta y hay que crear sala de nuevo.
+- Las salas viven en memoria de la instancia. Si al unirte aparece
+  «SALA NO ENCONTRADA» con un código correcto, es que las dos conexiones
+  cayeron en instancias distintas (raro con poco tráfico): cread la sala de
+  nuevo y reintentad.
+
+## Desplegar en otro sitio
+
+También es una app Node.js estándar con un solo puerto (`PORT`): funciona tal
+cual en **Render**, **Railway**, **Fly.io** o un VPS propio con `npm start`.
 El cliente usa automáticamente `wss://` cuando la página se sirve por HTTPS.

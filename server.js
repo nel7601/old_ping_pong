@@ -1,19 +1,21 @@
 /*
- * OLD PING PONG - servidor
+ * OLD PING PONG - servidor para local / VPS
  *
- * Sirve el cliente (carpeta public/) por HTTP y actúa como relay
- * WebSocket entre los dos teléfonos. Los jugadores pueden estar en
- * redes distintas: ambos se conectan a este servidor y se emparejan
- * mediante un código de sala de 4 letras.
+ * Sirve el cliente (carpeta public/) por HTTP y acepta los WebSockets
+ * en /api/ws — la misma ruta que usa el despliegue en Vercel, así el
+ * cliente no distingue entre entornos. La lógica de salas está en
+ * lib/rooms.js.
  */
 
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const { WebSocketServer } = require('ws');
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { WebSocketServer } from 'ws';
+import { handleConnection } from './lib/rooms.js';
 
 const PORT = process.env.PORT || 3000;
-const PUBLIC_DIR = path.join(__dirname, 'public');
+const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -44,107 +46,8 @@ const server = http.createServer((req, res) => {
   });
 });
 
-// ---- Salas ----------------------------------------------------------------
-
-// code -> { host: ws, guest: ws | null }
-const rooms = new Map();
-
-// Sin I, O, 0, 1 para evitar confusiones al dictar el código
-const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-
-function newCode() {
-  let code;
-  do {
-    code = '';
-    for (let i = 0; i < 4; i++) {
-      code += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
-    }
-  } while (rooms.has(code));
-  return code;
-}
-
-function send(ws, msg) {
-  if (ws && ws.readyState === ws.OPEN) {
-    ws.send(JSON.stringify(msg));
-  }
-}
-
-function peerOf(ws) {
-  const room = rooms.get(ws.roomCode);
-  if (!room) return null;
-  return ws === room.host ? room.guest : room.host;
-}
-
-const wss = new WebSocketServer({ server });
-
-wss.on('connection', (ws) => {
-  ws.isAlive = true;
-  ws.on('pong', () => { ws.isAlive = true; });
-
-  ws.on('message', (raw) => {
-    let msg;
-    try {
-      msg = JSON.parse(raw);
-    } catch {
-      return;
-    }
-
-    switch (msg.type) {
-      case 'create': {
-        const code = newCode();
-        rooms.set(code, { host: ws, guest: null });
-        ws.roomCode = code;
-        send(ws, { type: 'created', code });
-        break;
-      }
-
-      case 'join': {
-        const code = String(msg.code || '').trim().toUpperCase();
-        const room = rooms.get(code);
-        if (!room) {
-          return send(ws, { type: 'error', reason: 'not_found' });
-        }
-        if (room.guest) {
-          return send(ws, { type: 'error', reason: 'full' });
-        }
-        room.guest = ws;
-        ws.roomCode = code;
-        // El host saca primero; el guest espera el primer pase de bola.
-        send(room.host, { type: 'start', role: 'host' });
-        send(room.guest, { type: 'start', role: 'guest' });
-        break;
-      }
-
-      // Todo lo demás (bola, goles, revancha...) se retransmite al rival.
-      default: {
-        send(peerOf(ws), msg);
-      }
-    }
-  });
-
-  ws.on('close', () => {
-    const room = rooms.get(ws.roomCode);
-    if (!room) return;
-    const peer = peerOf(ws);
-    rooms.delete(ws.roomCode);
-    if (peer) {
-      peer.roomCode = undefined;
-      send(peer, { type: 'peer_left' });
-    }
-  });
-});
-
-// Limpieza de conexiones muertas (teléfonos que perdieron señal)
-setInterval(() => {
-  for (const ws of wss.clients) {
-    if (!ws.isAlive) {
-      ws.terminate();
-      continue;
-    }
-    ws.isAlive = false;
-    ws.ping();
-  }
-}, 30000);
+const wss = new WebSocketServer({ server, path: '/api/ws' });
+wss.on('connection', handleConnection);
 
 server.listen(PORT, () => {
   console.log(`OLD PING PONG escuchando en http://localhost:${PORT}`);
