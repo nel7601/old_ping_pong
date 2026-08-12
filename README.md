@@ -1,2 +1,53 @@
-# old_ping_pong
-This project is about an old fashion ping pong game.
+# OLD PING PONG
+
+Recreación del **Pong** original (Atari, 1972) para dos teléfonos conectados
+por internet. Muy simple, muy old fashion: negro, blanco y *beeps*.
+
+## Cómo funciona
+
+- Cada jugador abre el juego en el **navegador de su teléfono** (no hace falta
+  instalar nada de una tienda de apps).
+- Un jugador pulsa **CREAR PARTIDA** y obtiene un **código de sala de 4 letras**.
+- El otro jugador escribe ese código y pulsa **UNIRSE**. Los jugadores pueden
+  estar en **redes distintas y en cualquier parte del mundo**: ambos teléfonos
+  se conectan al servidor por WebSocket y este los empareja.
+- Cada teléfono muestra **su mitad de la mesa**: tu paleta abajo y la red
+  (línea discontinua) arriba. Cuando la bola sale por la parte de arriba de tu
+  pantalla, **entra por la pantalla del rival**.
+- El **marcador es compartido** y se ve en ambos teléfonos. Gana el primero
+  que llegue a **11 puntos**. El que falla vuelve a sacar.
+- Controles: **arrastra el dedo** por la pantalla para mover tu paleta.
+
+## Arquitectura
+
+```
+teléfono 1  ──WebSocket──►  servidor (relay + salas)  ◄──WebSocket──  teléfono 2
+```
+
+- `server.js` — servidor Node.js: sirve el cliente y retransmite los mensajes
+  entre los dos teléfonos de una sala. No simula el juego.
+- `public/` — el cliente: HTML5 canvas con controles táctiles.
+- La **física de la bola la calcula solo el teléfono en cuyo campo está** la
+  bola. Al cruzar la red se envía al rival su posición y velocidad (espejadas,
+  porque los jugadores están "frente a frente"). Así no hay problemas de
+  sincronización ni de latencia durante el juego.
+
+## Ejecutar en local
+
+```bash
+npm install
+npm start
+# abre http://localhost:3000 en dos pestañas o dos dispositivos de la misma red
+```
+
+## Desplegar en internet (para jugar entre distintas redes)
+
+Es una app Node.js estándar con un solo puerto (`PORT`), así que se puede
+desplegar tal cual en cualquier servicio como **Render**, **Railway**,
+**Fly.io** o un VPS propio:
+
+1. Sube este repositorio al servicio.
+2. Comando de arranque: `npm start` (el servicio define `PORT` solo).
+3. Comparte la URL resultante (`https://...`) con los dos jugadores.
+
+El cliente usa automáticamente `wss://` cuando la página se sirve por HTTPS.
