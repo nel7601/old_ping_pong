@@ -35,9 +35,13 @@ const BALL_SPEEDUP = 1.05;     // acceleration per paddle hit
 const BALL_SPEED_MAX = 2.2;
 const BALL_VX_MAX = 0.9;       // max sideways speed when hit with the edge
 
-// A match lasts 4 minutes; whoever leads when time runs out wins.
-// (?t=SECONDS in the URL overrides it — handy for testing.)
-const GAME_SECONDS = Number(new URLSearchParams(location.search).get('t')) || 240;
+// Match settings are chosen by the host on the CREATE screen (1-4 minutes,
+// 1-3 simultaneous balls) and distributed by the server to BOTH players,
+// so the two phones always agree on clock and ball count.
+// (?t=SECONDS in the URL overrides the duration — handy for testing.)
+const TEST_SECONDS = Number(new URLSearchParams(location.search).get('t')) || 0;
+const SERVE_DELAY = 1200;      // ms before a serve
+const MULTIBALL_GAP = 3000;    // ms between serves when launching several balls
 const URGENT_AT = 30;          // under 30s everything turns red
 const URGENT_COLOR = '#ff2222';
 
@@ -63,9 +67,14 @@ const state = {
   lastBallEvent: 0,         // watchdog: when we last saw/served/passed the ball
 
   paddleX: 0.5,
-  ball: null,               // {x, y, vx, vy} or null while on the rival's side
+  balls: [],                // [{x, y, vx, vy}] — balls currently on MY side
+  servesPending: 0,         // balls I still owe a serve for
   serveTimer: null,
   serveMsg: null,           // {text, until}
+
+  config: { seconds: 240, balls: 1 },  // set by the server on 'start'/'resumed'
+  optMinutes: 4,            // menu selections (host only)
+  optBalls: 1,
 
   score: { me: 0, opp: 0 },
   myRematch: false,
@@ -228,6 +237,7 @@ function handleMessage(msg) {
       state.role = msg.role;
       if (msg.code) state.code = msg.code;
       if (msg.token) state.token = msg.token;
+      if (msg.config) state.config = msg.config;
       saveSession();
       startMatch();
       break;
@@ -236,6 +246,7 @@ function handleMessage(msg) {
       state.resuming = false;
       state.reconnectTries = 0;
       state.role = msg.role;
+      if (msg.config) state.config = msg.config;
       saveSession();
       if (state.phase === 'over') break; // keep the game-over screen as-is
       if (msg.started) {
@@ -277,7 +288,7 @@ function handleMessage(msg) {
       }
       if (state.pendingServe && state.phase === 'playing') {
         state.pendingServe = false;
-        scheduleServe();
+        scheduleNextServe(SERVE_DELAY);
       }
       break;
 
@@ -289,8 +300,8 @@ function handleMessage(msg) {
       break;
 
     case 'ball':
-      // The ball enters through the top of my screen (already mirrored by the rival)
-      state.ball = { x: msg.x, y: -BALL_SIZE, vx: msg.vx, vy: msg.vy };
+      // A ball enters through the top of my screen (already mirrored by the rival)
+      state.balls.push({ x: msg.x, y: -BALL_SIZE, vx: msg.vx, vy: msg.vy });
       state.lastBallEvent = performance.now();
       // The host's clock rides along on its messages: the guest adopts it
       if (state.role === 'guest' && typeof msg.t === 'number') state.timeLeft = msg.t;
@@ -336,13 +347,16 @@ function handleMessage(msg) {
 function startMatch() {
   state.phase = 'playing';
   state.score = { me: 0, opp: 0 };
-  state.ball = null;
+  state.balls = [];
+  state.servesPending = 0;
+  clearTimeout(state.serveTimer);
+  state.serveTimer = null;
   state.paddleX = 0.5;
   state.myRematch = false;
   state.theirRematch = false;
   state.pendingServe = false;
   state.lastBallEvent = performance.now();
-  state.timeLeft = GAME_SECONDS;
+  state.timeLeft = state.config.seconds;
   state.timeUpSent = false;
   state.result = null;
   el('over').classList.remove('result');
@@ -351,34 +365,43 @@ function startMatch() {
   showScreen(null);
   keepAwake();
 
-  // The host serves first
+  // The host launches every ball of the opening volley
   if (state.role === 'host') {
-    scheduleServe();
+    queueServes(state.config.balls);
   } else {
     flashMessage('RIVAL SERVES');
   }
 }
 
-function scheduleServe() {
+// Owe `count` more serves; balls launch one at a time, 3s apart
+function queueServes(count) {
+  state.servesPending += count;
+  if (!state.serveTimer) scheduleNextServe(SERVE_DELAY);
+}
+
+function scheduleNextServe(delay) {
   flashMessage('YOU SERVE');
   clearTimeout(state.serveTimer);
   state.serveTimer = setTimeout(() => {
-    if (state.phase !== 'playing') return;
+    state.serveTimer = null;
+    if (state.phase !== 'playing' || state.servesPending <= 0) return;
     if (state.peerAway) {
       // Don't serve against a rival who isn't watching: wait for them
       state.pendingServe = true;
       return;
     }
-    // The serve goes from your court toward the rival, like real table tennis
-    const angle = (Math.random() * 0.6 - 0.3); // gentle random vx
-    state.ball = {
-      x: 0.3 + Math.random() * 0.4,
-      y: PLAY_H - 0.25,
-      vx: angle,
+    // The serve leaves FROM the server's paddle, straight up toward the rival
+    state.balls.push({
+      x: state.paddleX - BALL_SIZE / 2,
+      y: PADDLE_Y - BALL_SIZE - 0.002,
+      vx: (Math.random() * 0.6 - 0.3),
       vy: -BALL_SPEED0
-    };
+    });
+    sndPaddle();
     state.lastBallEvent = performance.now();
-  }, 1200);
+    state.servesPending -= 1;
+    if (state.servesPending > 0) scheduleNextServe(MULTIBALL_GAP);
+  }, delay);
 }
 
 function flashMessage(text) {
@@ -386,23 +409,24 @@ function flashMessage(text) {
 }
 
 function concedeGoal() {
-  state.ball = null;
   state.score.opp += 1;
   state.lastBallEvent = performance.now();
   sndScore();
   const goal = { type: 'goal', scorer: state.score.opp, conceder: state.score.me };
   if (state.role === 'host' && state.timeLeft !== null) goal.t = state.timeLeft;
   sendMsg(goal);
-  scheduleServe(); // whoever misses serves again
+  queueServes(1); // whoever misses serves that ball again
 }
 
 // Match over by clock: the result is drawn INSIDE the play area
 // (confetti for the winner, a pixel sad face for the loser).
 function endByTime() {
   clearTimeout(state.serveTimer);
+  state.serveTimer = null;
   clearSession();
   state.phase = 'over';
-  state.ball = null;
+  state.balls = [];
+  state.servesPending = 0;
   state.timeLeft = 0;
   const tie = state.score.me === state.score.opp;
   const won = state.score.me > state.score.opp;
@@ -433,9 +457,11 @@ function endByTime() {
 // the classic full-screen message
 function endGame(title, detail) {
   clearTimeout(state.serveTimer);
+  state.serveTimer = null;
   clearSession();
   state.phase = 'over';
-  state.ball = null;
+  state.balls = [];
+  state.servesPending = 0;
   state.result = null;
   el('over').classList.remove('result');
   el('over-title').textContent = title;
@@ -463,7 +489,9 @@ function backToMenu() {
     state.ws = null;
   }
   state.phase = 'menu';
-  state.ball = null;
+  state.balls = [];
+  state.servesPending = 0;
+  state.serveTimer = null;
   state.code = null;
   state.token = null;
   state.resuming = false;
@@ -478,60 +506,63 @@ function backToMenu() {
 }
 
 // ---------------------------------------------------------------------------
-// Physics (only runs while the ball is on my side)
+// Physics (each ball is simulated only by the phone it is currently on)
 // ---------------------------------------------------------------------------
 
-function stepBall(dt) {
-  const b = state.ball;
-  if (!b) return;
+function stepBalls(dt) {
+  const survivors = [];
+  for (const b of state.balls) {
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
 
-  b.x += b.vx * dt;
-  b.y += b.vy * dt;
-
-  // Side walls
-  if (b.x < 0) {
-    b.x = -b.x;
-    b.vx = Math.abs(b.vx);
-    sndWall();
-  } else if (b.x + BALL_SIZE > COURT_W) {
-    b.x = 2 * (COURT_W - BALL_SIZE) - b.x;
-    b.vx = -Math.abs(b.vx);
-    sndWall();
-  }
-
-  // Paddle hit (the ball falls and crosses the paddle's top edge)
-  if (b.vy > 0 && b.y + BALL_SIZE >= PADDLE_Y && b.y + BALL_SIZE <= PADDLE_Y + PADDLE_H + 0.05) {
-    const paddleLeft = state.paddleX - PADDLE_W / 2;
-    if (b.x + BALL_SIZE >= paddleLeft && b.x <= paddleLeft + PADDLE_W) {
-      // Bounce: the impact point controls the angle, like in the original Pong
-      const hit = ((b.x + BALL_SIZE / 2) - state.paddleX) / (PADDLE_W / 2);
-      const speed = Math.min(Math.abs(b.vy) * BALL_SPEEDUP, BALL_SPEED_MAX);
-      b.vy = -speed;
-      b.vx = hit * BALL_VX_MAX;
-      b.y = PADDLE_Y - BALL_SIZE;
-      sndPaddle();
+    // Side walls
+    if (b.x < 0) {
+      b.x = -b.x;
+      b.vx = Math.abs(b.vx);
+      sndWall();
+    } else if (b.x + BALL_SIZE > COURT_W) {
+      b.x = 2 * (COURT_W - BALL_SIZE) - b.x;
+      b.vx = -Math.abs(b.vx);
+      sndWall();
     }
-  }
 
-  // Off the top: over to the rival's phone (mirrored, we face each other)
-  if (b.y + BALL_SIZE < 0) {
-    const pass = {
-      type: 'ball',
-      x: COURT_W - b.x - BALL_SIZE,
-      vx: -b.vx,
-      vy: -b.vy
-    };
-    if (state.role === 'host' && state.timeLeft !== null) pass.t = state.timeLeft;
-    sendMsg(pass);
-    state.ball = null;
-    state.lastBallEvent = performance.now();
-    return;
-  }
+    // Paddle hit (the ball falls and crosses the paddle's top edge)
+    if (b.vy > 0 && b.y + BALL_SIZE >= PADDLE_Y && b.y + BALL_SIZE <= PADDLE_Y + PADDLE_H + 0.05) {
+      const paddleLeft = state.paddleX - PADDLE_W / 2;
+      if (b.x + BALL_SIZE >= paddleLeft && b.x <= paddleLeft + PADDLE_W) {
+        // Bounce: the impact point controls the angle, like in the original Pong
+        const hit = ((b.x + BALL_SIZE / 2) - state.paddleX) / (PADDLE_W / 2);
+        const speed = Math.min(Math.abs(b.vy) * BALL_SPEEDUP, BALL_SPEED_MAX);
+        b.vy = -speed;
+        b.vx = hit * BALL_VX_MAX;
+        b.y = PADDLE_Y - BALL_SIZE;
+        sndPaddle();
+      }
+    }
 
-  // Crossed the dashed line: I missed, point for the rival
-  if (b.y > PLAY_H) {
-    concedeGoal();
+    // Off the top: over to the rival's phone (mirrored, we face each other)
+    if (b.y + BALL_SIZE < 0) {
+      const pass = {
+        type: 'ball',
+        x: COURT_W - b.x - BALL_SIZE,
+        vx: -b.vx,
+        vy: -b.vy
+      };
+      if (state.role === 'host' && state.timeLeft !== null) pass.t = state.timeLeft;
+      sendMsg(pass);
+      state.lastBallEvent = performance.now();
+      continue; // this ball now lives on the rival's phone
+    }
+
+    // Crossed the dashed line: I missed, point for the rival
+    if (b.y > PLAY_H) {
+      concedeGoal();
+      continue; // the lost ball is re-served by queueServes(1)
+    }
+
+    survivors.push(b);
   }
+  state.balls = survivors;
 }
 
 // ---------------------------------------------------------------------------
@@ -696,24 +727,24 @@ function render(now) {
     // Paddle, resting on the line
     ctx.fillRect(X(state.paddleX - PADDLE_W / 2), Y(PADDLE_Y), S(PADDLE_W), S(PADDLE_H));
 
-    // Ball (off the top it simply flies into the rival's screen)
-    if (state.ball) {
-      ctx.fillRect(X(state.ball.x), Y(state.ball.y), S(BALL_SIZE), S(BALL_SIZE));
+    // Balls (off the top they simply fly into the rival's screen)
+    for (const b of state.balls) {
+      ctx.fillRect(X(b.x), Y(b.y), S(BALL_SIZE), S(BALL_SIZE));
     }
   }
 
   // ---- Info zone: the bottom fifth, below the line ----
 
-  // Score: YOU on the left, RIVAL on the right, clock in the middle
+  // Score in the corners, clock in the middle, well apart from each other
   ctx.font = `${Math.round(S(0.028))}px "Courier New", monospace`;
   ctx.textAlign = 'center';
   ctx.globalAlpha = 0.7;
-  ctx.fillText('YOU', X(0.28), Y(PLAY_H + 0.06));
+  ctx.fillText('YOU', X(0.12), Y(PLAY_H + 0.06));
   ctx.fillText('TIME', X(0.5), Y(PLAY_H + 0.06));
-  ctx.fillText('RIVAL', X(0.72), Y(PLAY_H + 0.06));
+  ctx.fillText('RIVAL', X(0.88), Y(PLAY_H + 0.06));
   ctx.globalAlpha = 1;
-  drawNumber(state.score.me, X(0.28), Y(PLAY_H + 0.09), S(0.02));
-  drawNumber(state.score.opp, X(0.72), Y(PLAY_H + 0.09), S(0.02));
+  drawNumber(state.score.me, X(0.12), Y(PLAY_H + 0.09), S(0.02));
+  drawNumber(state.score.opp, X(0.88), Y(PLAY_H + 0.09), S(0.02));
   if (state.timeLeft !== null) {
     drawTimer(state.timeLeft, X(0.5), Y(PLAY_H + 0.09), S(0.02));
   }
@@ -735,8 +766,9 @@ function render(now) {
   } else if (state.serveMsg) {
     ctx.font = `bold ${Math.round(S(0.04))}px "Courier New", monospace`;
     ctx.fillText(state.serveMsg.text, X(0.5), statusY);
-  } else if (!state.ball) {
-    if (blinkOn) ctx.fillText('· BALL ON RIVAL SIDE ·', X(0.5), statusY);
+  } else if (state.balls.length === 0 && state.servesPending === 0) {
+    const label = state.config.balls > 1 ? '· BALLS ON RIVAL SIDE ·' : '· BALL ON RIVAL SIDE ·';
+    if (blinkOn) ctx.fillText(label, X(0.5), statusY);
   }
 }
 
@@ -751,7 +783,7 @@ function loop(now) {
   lastTime = now;
   // The game pauses while the rival is in the background or reconnecting
   const running = state.phase === 'playing' && !state.peerAway && !state.resuming;
-  if (running) stepBall(dt);
+  if (running) stepBalls(dt);
 
   // Match clock: counts down only while both players are present.
   // The host is the referee: it blows the final whistle for both.
@@ -764,14 +796,15 @@ function loop(now) {
     }
   }
 
-  // Ball watchdog: if the ball has been "on the rival side" suspiciously
-  // long with both players present, it got lost in a disconnect (e.g. it
-  // was in the rival's RAM when their browser reloaded). The host serves
-  // a fresh one so the match never stalls forever.
-  if (state.phase === 'playing' && !state.ball && !state.peerAway && !state.resuming &&
-      !state.pendingServe && state.ws && now - state.lastBallEvent > 8000) {
+  // Ball watchdog: if every ball has been "on the rival side" suspiciously
+  // long with both players present, they got lost in a disconnect (e.g.
+  // one was in the rival's RAM when their browser reloaded). The host
+  // serves a fresh one so the match never stalls forever.
+  if (state.phase === 'playing' && state.balls.length === 0 && !state.peerAway &&
+      !state.resuming && !state.pendingServe && state.servesPending === 0 &&
+      state.ws && now - state.lastBallEvent > 8000) {
     state.lastBallEvent = now;
-    if (state.role === 'host') scheduleServe();
+    if (state.role === 'host') queueServes(1);
   }
 
   render(now);
@@ -810,10 +843,32 @@ async function keepAwake() {
 // UI buttons
 // ---------------------------------------------------------------------------
 
+// Match option selectors: time (1-4 min) and simultaneous balls (1-3)
+for (const btn of document.querySelectorAll('.opt-btn[data-min]')) {
+  btn.addEventListener('click', () => {
+    state.optMinutes = Number(btn.dataset.min);
+    for (const b of document.querySelectorAll('.opt-btn[data-min]')) {
+      b.classList.toggle('sel', b === btn);
+    }
+  });
+}
+for (const btn of document.querySelectorAll('.opt-btn[data-balls]')) {
+  btn.addEventListener('click', () => {
+    state.optBalls = Number(btn.dataset.balls);
+    for (const b of document.querySelectorAll('.opt-btn[data-balls]')) {
+      b.classList.toggle('sel', b === btn);
+    }
+  });
+}
+
 el('btn-create').addEventListener('click', () => {
   beep(459, 0.03); // unlocks audio with the user's first gesture
   el('menu-error').textContent = '';
-  connect(() => sendMsg({ type: 'create' }));
+  connect(() => sendMsg({
+    type: 'create',
+    seconds: TEST_SECONDS || state.optMinutes * 60,
+    balls: state.optBalls
+  }));
 });
 
 el('btn-share').addEventListener('click', async () => {

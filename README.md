@@ -17,11 +17,15 @@ over the internet. Very simple, very old fashioned: black, white and *beeps*.
   status), separated by a dashed line with your paddle resting on it. When
   the ball flies off the top of your screen, it **enters your rival's
   screen**.
-- A match lasts **4 minutes**, with the remaining time shown between the
-  two scores. Under **30 seconds** everything on screen turns **red**.
-  Whoever leads when the clock hits zero wins: the winner's court fills
-  with **colored confetti**, the loser gets a **pixel sad face**. The
-  **score is shared** and shown on both phones; whoever misses serves next.
+- The host picks the match length (**1 to 4 minutes**) and how many balls
+  are in play at once (**1 to 3**) before creating the game. The remaining
+  time is shown between the two scores; under **30 seconds** everything on
+  screen turns **red**. Whoever leads when the clock hits zero wins: the
+  winner's court fills with **colored confetti**, the loser gets a **pixel
+  sad face**. The **score is shared** and shown on both phones.
+- Serves leave **from the server's paddle**; whoever misses a ball serves
+  it again. With multiple balls, the opening volley launches them one at
+  a time, **3 seconds apart**.
 - Controls: **drag your finger** across the screen to move your paddle.
 - If a phone leaves the browser for any reason (sharing the link, a call,
   a notification, the browser being killed or even reloaded) the game
