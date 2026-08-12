@@ -1,9 +1,9 @@
 /*
- * Endpoint WebSocket para Vercel (beta pública de WebSockets, junio 2026).
+ * WebSocket endpoint for Vercel (WebSockets public beta, June 2026).
  *
- * Corre sobre Fluid compute: la conexión queda anclada a la instancia
- * de la función mientras dure la partida. La lógica de salas vive en
- * lib/rooms.js, la misma que usa server.js en local.
+ * Runs on Fluid compute: the connection stays pinned to the function
+ * instance for the duration of the match. Room logic lives in
+ * lib/rooms.js, the same code server.js uses locally.
  */
 
 import { experimental_upgradeWebSocket } from '@vercel/functions';

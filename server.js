@@ -1,10 +1,9 @@
 /*
- * OLD PING PONG - servidor para local / VPS
+ * OLD PING PONG - server for local play / VPS
  *
- * Sirve el cliente (carpeta public/) por HTTP y acepta los WebSockets
- * en /api/ws — la misma ruta que usa el despliegue en Vercel, así el
- * cliente no distingue entre entornos. La lógica de salas está en
- * lib/rooms.js.
+ * Serves the client (public/ folder) over HTTP and accepts WebSockets
+ * at /api/ws — the same path the Vercel deployment uses, so the client
+ * can't tell the environments apart. Room logic lives in lib/rooms.js.
  */
 
 import http from 'node:http';
@@ -30,7 +29,7 @@ const server = http.createServer((req, res) => {
   const urlPath = decodeURIComponent(req.url.split('?')[0]);
   let filePath = path.join(PUBLIC_DIR, urlPath === '/' ? 'index.html' : urlPath);
 
-  // Nunca servir fuera de public/
+  // Never serve anything outside public/
   if (!filePath.startsWith(PUBLIC_DIR)) {
     res.writeHead(403);
     return res.end('Forbidden');
@@ -50,5 +49,5 @@ const wss = new WebSocketServer({ server, path: '/api/ws' });
 wss.on('connection', handleConnection);
 
 server.listen(PORT, () => {
-  console.log(`OLD PING PONG escuchando en http://localhost:${PORT}`);
+  console.log(`OLD PING PONG listening on http://localhost:${PORT}`);
 });

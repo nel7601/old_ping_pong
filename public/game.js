@@ -1,43 +1,44 @@
 /*
- * OLD PING PONG - cliente
+ * OLD PING PONG - client
  *
- * Cada teléfono muestra SU mitad de la mesa: tu paleta abajo y la
- * frontera con el campo rival arriba. La bola solo la simula el
- * teléfono en cuyo campo está; cuando sale por arriba, se envía al
- * rival (espejada) y entra por la parte superior de su pantalla.
+ * Each phone shows ITS half of the table: your paddle at the bottom and
+ * the border with the rival's court at the top. The ball is simulated
+ * only by the phone whose court it is in; when it leaves through the
+ * top it is sent to the rival (mirrored) and enters through the top of
+ * their screen.
  *
- * Coordenadas del campo: x en [0,1], y en [0,1.6]. y=0 es la red
- * (frontera con el rival), y=1.6 es el fondo detrás de tu paleta.
+ * Court coordinates: x in [0,1], y in [0,1.6]. y=0 is the top edge
+ * (border with the rival), y=1.6 is the bottom of the screen.
  */
 
 'use strict';
 
 // ---------------------------------------------------------------------------
-// Constantes del juego
+// Game constants
 // ---------------------------------------------------------------------------
 
 const COURT_W = 1;
 const COURT_H = 1.6;
 
-// La pantalla se divide en 5 quintos: los 4 de arriba son el área activa
-// (donde vive la bola) y el quinto inferior es la zona de información.
-// La línea discontinua marca esa frontera y la raqueta descansa sobre ella.
+// The screen is split into 5 fifths: the top 4 are the active area
+// (where the ball lives) and the bottom fifth is the info zone.
+// The dashed line marks that boundary and the paddle rests on it.
 const PLAY_H = COURT_H * 4 / 5;
 
 const PADDLE_W = 0.22;
 const PADDLE_H = 0.035;
-const PADDLE_Y = PLAY_H - PADDLE_H; // apoyada sobre la línea discontinua
+const PADDLE_Y = PLAY_H - PADDLE_H; // resting on the dashed line
 
-const BALL_SIZE = 0.028;       // la bola es un cuadrado, como en 1972
-const BALL_SPEED0 = 0.85;      // velocidad vertical inicial (unidades/s)
-const BALL_SPEEDUP = 1.05;     // aceleración por golpe de paleta
+const BALL_SIZE = 0.028;       // the ball is a square, like in 1972
+const BALL_SPEED0 = 0.85;      // initial vertical speed (units/s)
+const BALL_SPEEDUP = 1.05;     // acceleration per paddle hit
 const BALL_SPEED_MAX = 2.2;
-const BALL_VX_MAX = 0.9;       // máxima velocidad lateral al golpear con el borde
+const BALL_VX_MAX = 0.9;       // max sideways speed when hit with the edge
 
 const WIN_SCORE = 11;
 
 // ---------------------------------------------------------------------------
-// Estado
+// State
 // ---------------------------------------------------------------------------
 
 const state = {
@@ -45,17 +46,17 @@ const state = {
   role: null,               // host | guest
   ws: null,
 
-  code: null,               // código de la sala (viaja en el enlace)
-  token: null,              // token secreto para reanudar tras una desconexión
+  code: null,               // room code (travels in the link)
+  token: null,              // secret token to resume after a disconnect
   shareUrl: null,
   resuming: false,
   reconnectTries: 0,
   reconnectTimer: null,
-  peerAway: false,          // el rival está en segundo plano / reconectando
+  peerAway: false,          // the rival is in the background / reconnecting
   pendingServe: false,
 
   paddleX: 0.5,
-  ball: null,               // {x, y, vx, vy} o null si está en campo rival
+  ball: null,               // {x, y, vx, vy} or null while on the rival's side
   serveTimer: null,
   serveMsg: null,           // {text, until}
 
@@ -64,23 +65,23 @@ const state = {
   theirRematch: false
 };
 
-// Para sobrevivir a que el navegador recargue la página al volver de otra app
+// Survive the browser reloading the page when returning from another app
 function saveSession() {
   try {
     sessionStorage.setItem('pong_resume',
       JSON.stringify({ code: state.code, token: state.token, ts: Date.now() }));
-  } catch { /* modo privado, da igual */ }
+  } catch { /* private mode, never mind */ }
 }
 
 function clearSession() {
-  try { sessionStorage.removeItem('pong_resume'); } catch { /* ignorar */ }
+  try { sessionStorage.removeItem('pong_resume'); } catch { /* ignore */ }
 }
 
 function loadSession() {
   try {
     const s = JSON.parse(sessionStorage.getItem('pong_resume'));
     if (s && s.code && s.token && Date.now() - s.ts < 3 * 60 * 1000) return s;
-  } catch { /* ignorar */ }
+  } catch { /* ignore */ }
   return null;
 }
 
@@ -104,7 +105,7 @@ function showScreen(name) {
 }
 
 // ---------------------------------------------------------------------------
-// Sonido (frecuencias del Pong original: pared 226Hz, paleta 459Hz, punto 490Hz)
+// Sound (original Pong frequencies: wall 226Hz, paddle 459Hz, score 490Hz)
 // ---------------------------------------------------------------------------
 
 let audioCtx = null;
@@ -121,7 +122,7 @@ function beep(freq, duration) {
     osc.connect(gain).connect(audioCtx.destination);
     osc.start();
     osc.stop(audioCtx.currentTime + duration);
-  } catch { /* sin audio no pasa nada */ }
+  } catch { /* no audio is fine */ }
 }
 
 const sndWall = () => beep(226, 0.04);
@@ -129,7 +130,7 @@ const sndPaddle = () => beep(459, 0.05);
 const sndScore = () => beep(490, 0.25);
 
 // ---------------------------------------------------------------------------
-// Red
+// Networking
 // ---------------------------------------------------------------------------
 
 function connect(onOpen) {
@@ -147,20 +148,20 @@ function connect(onOpen) {
     state.ws = null;
     if (state.phase === 'menu') return;
 
-    // Primer intento de unirse fallido, sin token aún: volver al menú
+    // First join attempt failed, no token yet: back to the menu
     if (!state.token) {
       backToMenu();
-      el('menu-error').textContent = 'SIN CONEXION. INTENTALO DE NUEVO';
+      el('menu-error').textContent = 'NO CONNECTION. TRY AGAIN';
       return;
     }
 
-    // En cualquier otra fase: intentar reanudar (el móvil corta el
-    // WebSocket al pasar a segundo plano, p. ej. al compartir el enlace)
+    // Any other phase: try to resume (phones drop the WebSocket when
+    // the app goes to the background, e.g. while sharing the link)
     state.reconnectTries += 1;
     if (state.reconnectTries > 50) {
       clearSession();
       backToMenu();
-      el('menu-error').textContent = 'SIN CONEXION. INTENTALO DE NUEVO';
+      el('menu-error').textContent = 'NO CONNECTION. TRY AGAIN';
       return;
     }
     clearTimeout(state.reconnectTimer);
@@ -170,7 +171,7 @@ function connect(onOpen) {
 
 function tryResume() {
   if (state.phase === 'menu' || !state.token || !state.code) return;
-  if (state.ws && state.ws.readyState <= WebSocket.OPEN) return; // ya hay conexión
+  if (state.ws && state.ws.readyState <= WebSocket.OPEN) return; // already connected
   state.resuming = true;
   connect(() => sendMsg({ type: 'resume', code: state.code, token: state.token }));
 }
@@ -184,7 +185,7 @@ function sendMsg(msg) {
 function handleMessage(msg) {
   switch (msg.type) {
     case 'created': {
-      // El rival se une abriendo este enlace (el código viaja en la URL)
+      // The rival joins by opening this link (the code travels in the URL)
       state.code = msg.code;
       state.token = msg.token;
       saveSession();
@@ -203,9 +204,9 @@ function handleMessage(msg) {
       clearSession();
       backToMenu();
       el('menu-error').textContent =
-        wasResuming ? 'LA PARTIDA SE PERDIO. CREA OTRA'
-        : msg.reason === 'full' ? 'ESA PARTIDA YA ESTA LLENA'
-        : 'PARTIDA NO ENCONTRADA. PIDE UN ENLACE NUEVO';
+        wasResuming ? 'THE GAME WAS LOST. CREATE A NEW ONE'
+        : msg.reason === 'full' ? 'THAT GAME IS ALREADY FULL'
+        : 'GAME NOT FOUND. ASK FOR A NEW LINK';
       break;
     }
 
@@ -223,8 +224,8 @@ function handleMessage(msg) {
       state.role = msg.role;
       saveSession();
       if (!msg.started && (state.phase === 'waiting' || state.phase === 'joining')) {
-        // Seguimos esperando al rival: reconstruir la pantalla del enlace
-        // (puede que el navegador haya recargado la página)
+        // Still waiting for the rival: rebuild the link screen
+        // (the browser may have reloaded the page)
         state.shareUrl = `${location.origin}${location.pathname}?j=${state.code}`;
         el('share-url').textContent = state.shareUrl;
         el('btn-share').classList.toggle('hidden', !navigator.share);
@@ -233,8 +234,8 @@ function handleMessage(msg) {
       } else if (msg.started && state.phase === 'playing') {
         showScreen(null);
       }
-      // Si la partida empezó mientras estábamos fuera, el 'start' encolado
-      // llega justo después y arranca el juego solo.
+      // If the match started while we were away, the queued 'start'
+      // arrives right after this and kicks the game off by itself.
       break;
 
     case 'peer_away':
@@ -250,12 +251,12 @@ function handleMessage(msg) {
       break;
 
     case 'ball':
-      // La bola entra por arriba de mi pantalla (el rival ya la envió espejada)
+      // The ball enters through the top of my screen (already mirrored by the rival)
       state.ball = { x: msg.x, y: -BALL_SIZE, vx: msg.vx, vy: msg.vy };
       break;
 
     case 'goal':
-      // El rival falló: yo anoté. Él manda el marcador para mantenernos en sincronía.
+      // The rival missed: I scored. They send the score to keep us in sync.
       state.score.me = msg.scorer;
       state.score.opp = msg.conceder;
       sndScore();
@@ -270,7 +271,7 @@ function handleMessage(msg) {
     case 'peer_left':
       clearSession();
       if (state.phase === 'playing' || state.phase === 'over') {
-        endGame('RIVAL DESCONECTADO', 'Tu rival abandono la partida.');
+        endGame('RIVAL DISCONNECTED', 'Your rival left the game.');
         el('btn-rematch').classList.add('hidden');
       } else if (state.phase === 'waiting' || state.phase === 'joining') {
         backToMenu();
@@ -280,7 +281,7 @@ function handleMessage(msg) {
 }
 
 // ---------------------------------------------------------------------------
-// Flujo de partida
+// Match flow
 // ---------------------------------------------------------------------------
 
 function startMatch() {
@@ -296,26 +297,26 @@ function startMatch() {
   showScreen(null);
   keepAwake();
 
-  // El host hace el primer saque
+  // The host serves first
   if (state.role === 'host') {
     scheduleServe();
   } else {
-    flashMessage('SACA EL RIVAL');
+    flashMessage('RIVAL SERVES');
   }
 }
 
 function scheduleServe() {
-  flashMessage('TU SACAS');
+  flashMessage('YOU SERVE');
   clearTimeout(state.serveTimer);
   state.serveTimer = setTimeout(() => {
     if (state.phase !== 'playing') return;
     if (state.peerAway) {
-      // No sacar contra un rival que no está mirando: esperar a que vuelva
+      // Don't serve against a rival who isn't watching: wait for them
       state.pendingServe = true;
       return;
     }
-    // El saque sale desde tu campo hacia el rival, como en el tenis de mesa real
-    const angle = (Math.random() * 0.6 - 0.3); // vx aleatorio suave
+    // The serve goes from your court toward the rival, like real table tennis
+    const angle = (Math.random() * 0.6 - 0.3); // gentle random vx
     state.ball = {
       x: 0.3 + Math.random() * 0.4,
       y: PLAY_H - 0.25,
@@ -335,17 +336,17 @@ function concedeGoal() {
   sndScore();
   sendMsg({ type: 'goal', scorer: state.score.opp, conceder: state.score.me });
   if (!checkWin()) {
-    scheduleServe(); // el que falla vuelve a sacar
+    scheduleServe(); // whoever misses serves again
   }
 }
 
 function checkWin() {
   if (state.score.me >= WIN_SCORE) {
-    endGame('GANASTE', `${state.score.me} - ${state.score.opp}`);
+    endGame('YOU WIN', `${state.score.me} - ${state.score.opp}`);
     return true;
   }
   if (state.score.opp >= WIN_SCORE) {
-    endGame('PERDISTE', `${state.score.opp} - ${state.score.me}`);
+    endGame('YOU LOSE', `${state.score.opp} - ${state.score.me}`);
     return true;
   }
   return false;
@@ -358,7 +359,7 @@ function endGame(title, detail) {
   state.ball = null;
   el('over-title').textContent = title;
   el('over-detail').textContent = detail;
-  el('btn-rematch').textContent = 'REVANCHA';
+  el('btn-rematch').textContent = 'REMATCH';
   showScreen('over');
 }
 
@@ -366,7 +367,7 @@ function tryRematch() {
   if (state.myRematch && state.theirRematch) {
     startMatch();
   } else if (state.myRematch) {
-    el('btn-rematch').textContent = 'ESPERANDO...';
+    el('btn-rematch').textContent = 'WAITING...';
   }
 }
 
@@ -376,7 +377,7 @@ function backToMenu() {
   clearSession();
   if (state.ws) {
     state.ws.onclose = null;
-    sendMsg({ type: 'leave' }); // que el rival no espere el periodo de gracia
+    sendMsg({ type: 'leave' }); // so the rival doesn't sit out the grace period
     state.ws.close();
     state.ws = null;
   }
@@ -393,7 +394,7 @@ function backToMenu() {
 }
 
 // ---------------------------------------------------------------------------
-// Física (solo corre cuando la bola está en mi campo)
+// Physics (only runs while the ball is on my side)
 // ---------------------------------------------------------------------------
 
 function stepBall(dt) {
@@ -403,7 +404,7 @@ function stepBall(dt) {
   b.x += b.vx * dt;
   b.y += b.vy * dt;
 
-  // Paredes laterales
+  // Side walls
   if (b.x < 0) {
     b.x = -b.x;
     b.vx = Math.abs(b.vx);
@@ -414,11 +415,11 @@ function stepBall(dt) {
     sndWall();
   }
 
-  // Golpe de paleta (la bola baja y cruza el borde superior de la paleta)
+  // Paddle hit (the ball falls and crosses the paddle's top edge)
   if (b.vy > 0 && b.y + BALL_SIZE >= PADDLE_Y && b.y + BALL_SIZE <= PADDLE_Y + PADDLE_H + 0.05) {
     const paddleLeft = state.paddleX - PADDLE_W / 2;
     if (b.x + BALL_SIZE >= paddleLeft && b.x <= paddleLeft + PADDLE_W) {
-      // Rebote: el punto de impacto controla el ángulo, como en el Pong original
+      // Bounce: the impact point controls the angle, like in the original Pong
       const hit = ((b.x + BALL_SIZE / 2) - state.paddleX) / (PADDLE_W / 2);
       const speed = Math.min(Math.abs(b.vy) * BALL_SPEEDUP, BALL_SPEED_MAX);
       b.vy = -speed;
@@ -428,7 +429,7 @@ function stepBall(dt) {
     }
   }
 
-  // Sale por arriba: pasa al teléfono del rival (espejada, porque estamos frente a frente)
+  // Off the top: over to the rival's phone (mirrored, we face each other)
   if (b.y + BALL_SIZE < 0) {
     sendMsg({
       type: 'ball',
@@ -440,7 +441,7 @@ function stepBall(dt) {
     return;
   }
 
-  // Cruza la línea discontinua: fallé, punto para el rival
+  // Crossed the dashed line: I missed, point for the rival
   if (b.y > PLAY_H) {
     concedeGoal();
   }
@@ -450,7 +451,7 @@ function stepBall(dt) {
 // Render
 // ---------------------------------------------------------------------------
 
-// Dígitos 3x5 dibujados con rectángulos, como los marcadores de 1972
+// 3x5 digits drawn with rectangles, like the 1972 scoreboards
 const DIGITS = {
   0: ['111', '101', '101', '101', '111'],
   1: ['010', '110', '010', '010', '111'],
@@ -507,55 +508,55 @@ function render(now) {
 
   ctx.fillStyle = '#fff';
 
-  // Paredes laterales del área activa (los 4/5 superiores)
+  // Side walls of the active area (the top 4/5)
   ctx.fillRect(X(0) - S(0.008), Y(0), S(0.008), S(PLAY_H));
   ctx.fillRect(X(COURT_W), Y(0), S(0.008), S(PLAY_H));
 
-  // Línea discontinua: frontera entre el área de juego y la zona de información
+  // Dashed line: boundary between the play area and the info zone
   const dashW = S(0.03);
   for (let x = 0; x < COURT_W; x += 0.06) {
     ctx.fillRect(X(x), Y(PLAY_H), dashW, S(0.008));
   }
 
-  // Paleta, apoyada sobre la línea
+  // Paddle, resting on the line
   ctx.fillRect(X(state.paddleX - PADDLE_W / 2), Y(PADDLE_Y), S(PADDLE_W), S(PADDLE_H));
 
-  // Bola (por arriba simplemente se pierde hacia la pantalla del rival)
+  // Ball (off the top it simply flies into the rival's screen)
   if (state.ball) {
     ctx.fillRect(X(state.ball.x), Y(state.ball.y), S(BALL_SIZE), S(BALL_SIZE));
   }
 
-  // ---- Zona de información: el quinto inferior, bajo la línea ----
+  // ---- Info zone: the bottom fifth, below the line ----
 
-  // Marcador: TU a la izquierda, RIVAL a la derecha
+  // Score: YOU on the left, RIVAL on the right
   ctx.font = `${Math.round(S(0.028))}px "Courier New", monospace`;
   ctx.textAlign = 'center';
   ctx.globalAlpha = 0.7;
-  ctx.fillText('TU', X(0.28), Y(PLAY_H + 0.06));
+  ctx.fillText('YOU', X(0.28), Y(PLAY_H + 0.06));
   ctx.fillText('RIVAL', X(0.72), Y(PLAY_H + 0.06));
   ctx.globalAlpha = 1;
   drawNumber(state.score.me, X(0.28), Y(PLAY_H + 0.09), S(0.02));
   drawNumber(state.score.opp, X(0.72), Y(PLAY_H + 0.09), S(0.02));
 
-  // Estado de la partida (parpadea como en las recreativas)
+  // Match status (blinks like the old arcades)
   const blinkOn = Math.floor(now / 500) % 2 === 0;
   const statusY = Y(PLAY_H + 0.27);
   if (state.serveMsg && now > state.serveMsg.until) state.serveMsg = null;
   ctx.font = `${Math.round(S(0.033))}px "Courier New", monospace`;
   if (state.resuming || !state.ws) {
-    if (blinkOn) ctx.fillText('RECONECTANDO...', X(0.5), statusY);
+    if (blinkOn) ctx.fillText('RECONNECTING...', X(0.5), statusY);
   } else if (state.peerAway) {
-    if (blinkOn) ctx.fillText('ESPERA: TU RIVAL VUELVE ENSEGUIDA', X(0.5), statusY);
+    if (blinkOn) ctx.fillText('HOLD ON: YOUR RIVAL IS COMING BACK', X(0.5), statusY);
   } else if (state.serveMsg) {
     ctx.font = `bold ${Math.round(S(0.04))}px "Courier New", monospace`;
     ctx.fillText(state.serveMsg.text, X(0.5), statusY);
   } else if (!state.ball) {
-    if (blinkOn) ctx.fillText('· BOLA EN CAMPO RIVAL ·', X(0.5), statusY);
+    if (blinkOn) ctx.fillText('· BALL ON RIVAL SIDE ·', X(0.5), statusY);
   }
 }
 
 // ---------------------------------------------------------------------------
-// Bucle principal
+// Main loop
 // ---------------------------------------------------------------------------
 
 let lastTime = 0;
@@ -563,19 +564,19 @@ let lastTime = 0;
 function loop(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
-  // El juego se pausa mientras el rival está en segundo plano o reconectando
+  // The game pauses while the rival is in the background or reconnecting
   if (state.phase === 'playing' && !state.peerAway && !state.resuming) stepBall(dt);
   render(now);
   requestAnimationFrame(loop);
 }
 
 // ---------------------------------------------------------------------------
-// Controles táctiles
+// Touch controls
 // ---------------------------------------------------------------------------
 
 function onPointer(ev) {
   ev.preventDefault();
-  // Desbloquear el audio con el primer gesto (necesario si se entró por enlace)
+  // Unlock audio on the first gesture (needed when arriving via link)
   if (!audioCtx) beep(0.01, 0.01);
   else if (audioCtx.state === 'suspended') audioCtx.resume();
   const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
@@ -590,35 +591,35 @@ canvas.addEventListener('touchmove', onPointer, { passive: false });
 canvas.addEventListener('mousedown', onPointer);
 canvas.addEventListener('mousemove', (ev) => { if (ev.buttons) onPointer(ev); });
 
-// Mantener la pantalla encendida durante la partida (si el navegador lo permite)
+// Keep the screen on during the match (when the browser allows it)
 async function keepAwake() {
   try {
     if ('wakeLock' in navigator) await navigator.wakeLock.request('screen');
-  } catch { /* opcional */ }
+  } catch { /* optional */ }
 }
 
 // ---------------------------------------------------------------------------
-// Botones de la interfaz
+// UI buttons
 // ---------------------------------------------------------------------------
 
 el('btn-create').addEventListener('click', () => {
-  beep(459, 0.03); // desbloquea el audio con el primer gesto del usuario
+  beep(459, 0.03); // unlocks audio with the user's first gesture
   el('menu-error').textContent = '';
   connect(() => sendMsg({ type: 'create' }));
 });
 
 el('btn-share').addEventListener('click', async () => {
   try {
-    await navigator.share({ title: 'PONG', text: 'Juega Pong conmigo:', url: state.shareUrl });
-  } catch { /* el usuario cerró el menú de compartir */ }
+    await navigator.share({ title: 'PONG', text: 'Play Pong with me:', url: state.shareUrl });
+  } catch { /* the user closed the share sheet */ }
 });
 
 el('btn-copy').addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(state.shareUrl);
-    el('copy-done').textContent = 'COPIADO';
+    el('copy-done').textContent = 'COPIED';
   } catch {
-    el('copy-done').textContent = 'NO SE PUDO COPIAR, HAZLO A MANO';
+    el('copy-done').textContent = 'COPY FAILED, DO IT BY HAND';
   }
   setTimeout(() => { el('copy-done').textContent = ''; }, 2000);
 });
@@ -633,24 +634,24 @@ el('btn-rematch').addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Arranque
+// Startup
 // ---------------------------------------------------------------------------
 
 window.addEventListener('resize', resize);
 resize();
 
-// Si la página se abrió con un enlace de partida (?j=CODIGO), unirse directamente
+// If the page was opened with a game link (?j=CODE), join right away
 const joinCode = new URLSearchParams(location.search).get('j');
 const savedSession = loadSession();
 if (joinCode) {
-  history.replaceState(null, '', location.pathname); // no re-unirse al recargar
+  history.replaceState(null, '', location.pathname); // don't re-join on reload
   clearSession();
   state.phase = 'joining';
   showScreen('joining');
   connect(() => sendMsg({ type: 'join', code: joinCode }));
 } else if (savedSession) {
-  // El navegador recargó la página (p. ej. al volver de WhatsApp):
-  // recuperar la partida en curso
+  // The browser reloaded the page (e.g. coming back from WhatsApp):
+  // recover the game in progress
   state.code = savedSession.code;
   state.token = savedSession.token;
   state.phase = 'joining';
@@ -659,7 +660,7 @@ if (joinCode) {
   connect(() => sendMsg({ type: 'resume', code: state.code, token: state.token }));
 }
 
-// Al volver a primer plano, reconectar sin esperar al siguiente reintento
+// On returning to the foreground, reconnect without waiting for the next retry
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.token && state.phase !== 'menu' &&
       (!state.ws || state.ws.readyState > WebSocket.OPEN)) {
