@@ -54,6 +54,7 @@ const state = {
   reconnectTimer: null,
   peerAway: false,          // the rival is in the background / reconnecting
   pendingServe: false,
+  lastBallEvent: 0,         // watchdog: when we last saw/served/passed the ball
 
   paddleX: 0.5,
   ball: null,               // {x, y, vx, vy} or null while on the rival's side
@@ -65,22 +66,24 @@ const state = {
   theirRematch: false
 };
 
-// Survive the browser reloading the page when returning from another app
+// Survive the browser being reloaded, killed or reopened in a new tab:
+// localStorage (unlike sessionStorage) outlives all of those. The server
+// holds the seat for 10 minutes, so accept sessions up to 12 minutes old.
 function saveSession() {
   try {
-    sessionStorage.setItem('pong_resume',
+    localStorage.setItem('pong_resume',
       JSON.stringify({ code: state.code, token: state.token, ts: Date.now() }));
   } catch { /* private mode, never mind */ }
 }
 
 function clearSession() {
-  try { sessionStorage.removeItem('pong_resume'); } catch { /* ignore */ }
+  try { localStorage.removeItem('pong_resume'); } catch { /* ignore */ }
 }
 
 function loadSession() {
   try {
-    const s = JSON.parse(sessionStorage.getItem('pong_resume'));
-    if (s && s.code && s.token && Date.now() - s.ts < 3 * 60 * 1000) return s;
+    const s = JSON.parse(localStorage.getItem('pong_resume'));
+    if (s && s.code && s.token && Date.now() - s.ts < 12 * 60 * 1000) return s;
   } catch { /* ignore */ }
   return null;
 }
@@ -156,9 +159,10 @@ function connect(onOpen) {
     }
 
     // Any other phase: try to resume (phones drop the WebSocket when
-    // the app goes to the background, e.g. while sharing the link)
+    // the app goes to the background, e.g. while sharing the link).
+    // Keep trying for as long as the server holds the seat (~10 min).
     state.reconnectTries += 1;
-    if (state.reconnectTries > 50) {
+    if (state.reconnectTries > 240) {
       clearSession();
       backToMenu();
       el('menu-error').textContent = 'NO CONNECTION. TRY AGAIN';
@@ -223,7 +227,23 @@ function handleMessage(msg) {
       state.reconnectTries = 0;
       state.role = msg.role;
       saveSession();
-      if (!msg.started && (state.phase === 'waiting' || state.phase === 'joining')) {
+      if (state.phase === 'over') break; // keep the game-over screen as-is
+      if (msg.started) {
+        // Back into the running match, wherever we came from (a brief
+        // drop, a page reload, a killed browser). The server remembers
+        // the score, so restore it instead of starting from zero.
+        if (msg.score) {
+          state.score.me = msg.score.you;
+          state.score.opp = msg.score.rival;
+        }
+        state.phase = 'playing';
+        state.lastBallEvent = performance.now();
+        el('btn-rematch').classList.remove('hidden');
+        showScreen(null);
+        keepAwake();
+        // If the match started while we were away, the queued 'start'
+        // arrives right after this and (re)kicks the serve flow itself.
+      } else if (state.phase === 'waiting' || state.phase === 'joining') {
         // Still waiting for the rival: rebuild the link screen
         // (the browser may have reloaded the page)
         state.shareUrl = `${location.origin}${location.pathname}?j=${state.code}`;
@@ -231,11 +251,7 @@ function handleMessage(msg) {
         el('btn-share').classList.toggle('hidden', !navigator.share);
         state.phase = 'waiting';
         showScreen('waiting');
-      } else if (msg.started && state.phase === 'playing') {
-        showScreen(null);
       }
-      // If the match started while we were away, the queued 'start'
-      // arrives right after this and kicks the game off by itself.
       break;
 
     case 'peer_away':
@@ -244,6 +260,7 @@ function handleMessage(msg) {
 
     case 'peer_back':
       state.peerAway = false;
+      state.lastBallEvent = performance.now();
       if (state.pendingServe && state.phase === 'playing') {
         state.pendingServe = false;
         scheduleServe();
@@ -253,12 +270,14 @@ function handleMessage(msg) {
     case 'ball':
       // The ball enters through the top of my screen (already mirrored by the rival)
       state.ball = { x: msg.x, y: -BALL_SIZE, vx: msg.vx, vy: msg.vy };
+      state.lastBallEvent = performance.now();
       break;
 
     case 'goal':
       // The rival missed: I scored. They send the score to keep us in sync.
       state.score.me = msg.scorer;
       state.score.opp = msg.conceder;
+      state.lastBallEvent = performance.now();
       sndScore();
       checkWin();
       break;
@@ -292,6 +311,7 @@ function startMatch() {
   state.myRematch = false;
   state.theirRematch = false;
   state.pendingServe = false;
+  state.lastBallEvent = performance.now();
   saveSession();
   el('btn-rematch').classList.remove('hidden');
   showScreen(null);
@@ -323,6 +343,7 @@ function scheduleServe() {
       vx: angle,
       vy: -BALL_SPEED0
     };
+    state.lastBallEvent = performance.now();
   }, 1200);
 }
 
@@ -333,6 +354,7 @@ function flashMessage(text) {
 function concedeGoal() {
   state.ball = null;
   state.score.opp += 1;
+  state.lastBallEvent = performance.now();
   sndScore();
   sendMsg({ type: 'goal', scorer: state.score.opp, conceder: state.score.me });
   if (!checkWin()) {
@@ -438,6 +460,7 @@ function stepBall(dt) {
       vy: -b.vy
     });
     state.ball = null;
+    state.lastBallEvent = performance.now();
     return;
   }
 
@@ -566,6 +589,17 @@ function loop(now) {
   lastTime = now;
   // The game pauses while the rival is in the background or reconnecting
   if (state.phase === 'playing' && !state.peerAway && !state.resuming) stepBall(dt);
+
+  // Ball watchdog: if the ball has been "on the rival side" suspiciously
+  // long with both players present, it got lost in a disconnect (e.g. it
+  // was in the rival's RAM when their browser reloaded). The host serves
+  // a fresh one so the match never stalls forever.
+  if (state.phase === 'playing' && !state.ball && !state.peerAway && !state.resuming &&
+      !state.pendingServe && state.ws && now - state.lastBallEvent > 8000) {
+    state.lastBallEvent = now;
+    if (state.role === 'host') scheduleServe();
+  }
+
   render(now);
   requestAnimationFrame(loop);
 }
@@ -661,12 +695,28 @@ if (joinCode) {
 }
 
 // On returning to the foreground, reconnect without waiting for the next retry
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.token && state.phase !== 'menu' &&
+function reconnectIfNeeded() {
+  if (state.token && state.phase !== 'menu' &&
       (!state.ws || state.ws.readyState > WebSocket.OPEN)) {
     clearTimeout(state.reconnectTimer);
     tryResume();
   }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') reconnectIfNeeded();
 });
+
+// Some mobile browsers restore the page from the back/forward cache
+// instead of firing visibilitychange — cover that path too
+window.addEventListener('pageshow', reconnectIfNeeded);
+
+// Keep the saved session fresh while a game or a waiting room is active,
+// so even a long match can be recovered after the browser is killed
+setInterval(() => {
+  if (state.token && (state.phase === 'playing' || state.phase === 'waiting')) {
+    saveSession();
+  }
+}, 20000);
 
 requestAnimationFrame((t) => { lastTime = t; requestAnimationFrame(loop); });

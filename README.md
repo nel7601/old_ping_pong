@@ -20,9 +20,10 @@ over the internet. Very simple, very old fashioned: black, white and *beeps*.
 - The **score is shared** and shown on both phones. First to **11 points**
   wins. Whoever misses serves next.
 - Controls: **drag your finger** across the screen to move your paddle.
-- If a phone goes to the background (sharing the link, a notification...)
-  the game pauses and the seat is held for **2 minutes**; the connection
-  resumes automatically when the player comes back.
+- If a phone leaves the browser for any reason (sharing the link, a call,
+  a notification, the browser being killed or even reloaded) the game
+  **pauses** and the seat is held for **10 minutes**; the session, the
+  score and the match resume automatically when the player comes back.
 
 ## Architecture
 
