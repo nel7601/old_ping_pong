@@ -57,9 +57,10 @@ Notas de la beta de WebSockets de Vercel:
 
 - **Fluid compute debe estar activo** (viene activado por defecto en
   proyectos nuevos: Settings → Functions → Fluid Compute).
-- La conexión dura como máximo `maxDuration` (800 s configurados en
-  `vercel.json`, ~13 min). Si una partida épica llega al límite, la conexión
-  se corta y hay que crear sala de nuevo.
+- La conexión dura como máximo `maxDuration` (300 s en el plan Hobby, 5 min,
+  configurado en `vercel.json`). Si una partida llega al límite, la conexión
+  se corta y hay que crear sala de nuevo. En planes de pago se puede subir
+  hasta 800 s.
 - Las salas viven en memoria de la instancia. Si al unirte aparece
   «SALA NO ENCONTRADA» con un código correcto, es que las dos conexiones
   cayeron en instancias distintas (raro con poco tráfico): cread la sala de

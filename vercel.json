@@ -3,7 +3,7 @@
   "outputDirectory": "public",
   "functions": {
     "api/ws.js": {
-      "maxDuration": 800
+      "maxDuration": 300
     }
   }
 }
