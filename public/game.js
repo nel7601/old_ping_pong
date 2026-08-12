@@ -58,7 +58,7 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
 const el = (id) => document.getElementById(id);
-const screens = { menu: el('menu'), waiting: el('waiting'), over: el('over') };
+const screens = { menu: el('menu'), waiting: el('waiting'), joining: el('joining'), over: el('over') };
 
 function showScreen(name) {
   for (const key of Object.keys(screens)) {
@@ -112,6 +112,9 @@ function connect(onOpen) {
   ws.onclose = () => {
     if (state.phase === 'playing') {
       endGame('SIN CONEXION', 'Se perdio la conexion con el servidor.');
+    } else if (state.phase === 'joining' || state.phase === 'waiting') {
+      backToMenu();
+      el('menu-error').textContent = 'SIN CONEXION. INTENTALO DE NUEVO';
     }
   };
 }
@@ -124,15 +127,24 @@ function sendMsg(msg) {
 
 function handleMessage(msg) {
   switch (msg.type) {
-    case 'created':
-      el('room-code').textContent = msg.code;
+    case 'created': {
+      // El rival se une abriendo este enlace (el código viaja en la URL)
+      const url = `${location.origin}${location.pathname}?j=${msg.code}`;
+      state.shareUrl = url;
+      el('share-url').textContent = url;
+      el('copy-done').textContent = '';
+      el('btn-share').classList.toggle('hidden', !navigator.share);
       state.phase = 'waiting';
       showScreen('waiting');
       break;
+    }
 
     case 'error':
+      backToMenu();
       el('menu-error').textContent =
-        msg.reason === 'full' ? 'ESA SALA YA ESTA LLENA' : 'SALA NO ENCONTRADA';
+        msg.reason === 'full'
+          ? 'ESA PARTIDA YA ESTA LLENA'
+          : 'PARTIDA NO ENCONTRADA. PIDE UN ENLACE NUEVO';
       break;
 
     case 'start':
@@ -443,6 +455,9 @@ function loop(now) {
 
 function onPointer(ev) {
   ev.preventDefault();
+  // Desbloquear el audio con el primer gesto (necesario si se entró por enlace)
+  if (!audioCtx) beep(0.01, 0.01);
+  else if (audioCtx.state === 'suspended') audioCtx.resume();
   const clientX = ev.touches ? ev.touches[0].clientX : ev.clientX;
   const dpr = window.devicePixelRatio || 1;
   const u = (clientX * dpr - view.ox) / view.scale;
@@ -472,19 +487,20 @@ el('btn-create').addEventListener('click', () => {
   connect(() => sendMsg({ type: 'create' }));
 });
 
-el('btn-join').addEventListener('click', () => {
-  beep(459, 0.03);
-  const code = el('code-input').value.trim().toUpperCase();
-  if (code.length !== 4) {
-    el('menu-error').textContent = 'EL CODIGO TIENE 4 LETRAS';
-    return;
-  }
-  el('menu-error').textContent = '';
-  connect(() => sendMsg({ type: 'join', code }));
+el('btn-share').addEventListener('click', async () => {
+  try {
+    await navigator.share({ title: 'PONG', text: 'Juega Pong conmigo:', url: state.shareUrl });
+  } catch { /* el usuario cerró el menú de compartir */ }
 });
 
-el('code-input').addEventListener('input', (ev) => {
-  ev.target.value = ev.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+el('btn-copy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(state.shareUrl);
+    el('copy-done').textContent = 'COPIADO';
+  } catch {
+    el('copy-done').textContent = 'NO SE PUDO COPIAR, HAZLO A MANO';
+  }
+  setTimeout(() => { el('copy-done').textContent = ''; }, 2000);
 });
 
 el('btn-cancel').addEventListener('click', backToMenu);
@@ -502,4 +518,14 @@ el('btn-rematch').addEventListener('click', () => {
 
 window.addEventListener('resize', resize);
 resize();
+
+// Si la página se abrió con un enlace de partida (?j=CODIGO), unirse directamente
+const joinCode = new URLSearchParams(location.search).get('j');
+if (joinCode) {
+  history.replaceState(null, '', location.pathname); // no re-unirse al recargar
+  state.phase = 'joining';
+  showScreen('joining');
+  connect(() => sendMsg({ type: 'join', code: joinCode }));
+}
+
 requestAnimationFrame((t) => { lastTime = t; requestAnimationFrame(loop); });

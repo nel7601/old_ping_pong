@@ -18,20 +18,26 @@
     <h1 class="title">PONG</h1>
     <p class="subtitle">1972 &middot; DOS TELEFONOS &middot; UNA MESA</p>
     <button id="btn-create" class="btn">CREAR PARTIDA</button>
-    <div class="join-row">
-      <input id="code-input" type="text" maxlength="4" placeholder="CODIGO" autocomplete="off" autocapitalize="characters" spellcheck="false">
-      <button id="btn-join" class="btn">UNIRSE</button>
-    </div>
+    <p class="hint">Crea una partida y comparte el enlace<br>con tu rival, este donde este.</p>
     <p id="menu-error" class="error"></p>
   </div>
 
   <!-- Esperando al rival -->
   <div id="waiting" class="screen hidden">
-    <p class="label">CODIGO DE SALA</p>
-    <p id="room-code" class="code">----</p>
-    <p class="hint">Dile este codigo a tu rival.<br>Puede estar en cualquier parte del mundo.</p>
+    <p class="label">ENLACE DE PARTIDA</p>
+    <p id="share-url" class="link"></p>
+    <button id="btn-share" class="btn">COMPARTIR ENLACE</button>
+    <button id="btn-copy" class="btn small">COPIAR ENLACE</button>
+    <p id="copy-done" class="error"></p>
+    <p class="hint">Tu rival solo tiene que abrir el enlace.</p>
     <p class="blink">ESPERANDO RIVAL...</p>
     <button id="btn-cancel" class="btn small">CANCELAR</button>
+  </div>
+
+  <!-- Uniéndose desde un enlace -->
+  <div id="joining" class="screen hidden">
+    <p class="title small-title">PONG</p>
+    <p class="blink">CONECTANDO...</p>
   </div>
 
   <!-- Fin de partida / desconexión -->

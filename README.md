@@ -7,10 +7,11 @@ por internet. Muy simple, muy old fashion: negro, blanco y *beeps*.
 
 - Cada jugador abre el juego en el **navegador de su teléfono** (no hace falta
   instalar nada de una tienda de apps).
-- Un jugador pulsa **CREAR PARTIDA** y obtiene un **código de sala de 4 letras**.
-- El otro jugador escribe ese código y pulsa **UNIRSE**. Los jugadores pueden
-  estar en **redes distintas y en cualquier parte del mundo**: ambos teléfonos
-  se conectan al servidor por WebSocket y este los empareja.
+- Un jugador pulsa **CREAR PARTIDA** y obtiene un **enlace para compartir**
+  (por WhatsApp, SMS, o como quiera).
+- El otro jugador simplemente **abre el enlace** y la partida empieza. Los
+  jugadores pueden estar en **redes distintas y en cualquier parte del mundo**:
+  ambos teléfonos se conectan al servidor por WebSocket y este los empareja.
 - Cada teléfono muestra **su mitad de la mesa**: tu paleta abajo y la red
   (línea discontinua) arriba. Cuando la bola sale por la parte de arriba de tu
   pantalla, **entra por la pantalla del rival**.
@@ -61,10 +62,10 @@ Notas de la beta de WebSockets de Vercel:
   configurado en `vercel.json`). Si una partida llega al límite, la conexión
   se corta y hay que crear sala de nuevo. En planes de pago se puede subir
   hasta 800 s.
-- Las salas viven en memoria de la instancia. Si al unirte aparece
-  «SALA NO ENCONTRADA» con un código correcto, es que las dos conexiones
-  cayeron en instancias distintas (raro con poco tráfico): cread la sala de
-  nuevo y reintentad.
+- Las salas viven en memoria de la instancia. Si al abrir un enlace válido
+  aparece «PARTIDA NO ENCONTRADA», es que las dos conexiones cayeron en
+  instancias distintas (raro con poco tráfico): cread la partida de nuevo
+  y reintentad.
 
 ## Desplegar en otro sitio
 
