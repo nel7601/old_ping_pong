@@ -19,9 +19,14 @@
 const COURT_W = 1;
 const COURT_H = 1.6;
 
+// La pantalla se divide en 5 quintos: los 4 de arriba son el área activa
+// (donde vive la bola) y el quinto inferior es la zona de información.
+// La línea discontinua marca esa frontera y la raqueta descansa sobre ella.
+const PLAY_H = COURT_H * 4 / 5;
+
 const PADDLE_W = 0.22;
 const PADDLE_H = 0.035;
-const PADDLE_Y = 1.5;          // borde superior de la paleta
+const PADDLE_Y = PLAY_H - PADDLE_H; // apoyada sobre la línea discontinua
 
 const BALL_SIZE = 0.028;       // la bola es un cuadrado, como en 1972
 const BALL_SPEED0 = 0.85;      // velocidad vertical inicial (unidades/s)
@@ -313,7 +318,7 @@ function scheduleServe() {
     const angle = (Math.random() * 0.6 - 0.3); // vx aleatorio suave
     state.ball = {
       x: 0.3 + Math.random() * 0.4,
-      y: 1.15,
+      y: PLAY_H - 0.25,
       vx: angle,
       vy: -BALL_SPEED0
     };
@@ -435,8 +440,8 @@ function stepBall(dt) {
     return;
   }
 
-  // Sale por abajo: fallé, punto para el rival
-  if (b.y > COURT_H) {
+  // Cruza la línea discontinua: fallé, punto para el rival
+  if (b.y > PLAY_H) {
     concedeGoal();
   }
 }
@@ -502,51 +507,50 @@ function render(now) {
 
   ctx.fillStyle = '#fff';
 
-  // Red: línea discontinua arriba, la frontera con el teléfono rival
+  // Paredes laterales del área activa (los 4/5 superiores)
+  ctx.fillRect(X(0) - S(0.008), Y(0), S(0.008), S(PLAY_H));
+  ctx.fillRect(X(COURT_W), Y(0), S(0.008), S(PLAY_H));
+
+  // Línea discontinua: frontera entre el área de juego y la zona de información
   const dashW = S(0.03);
   for (let x = 0; x < COURT_W; x += 0.06) {
-    ctx.fillRect(X(x), Y(0), dashW, S(0.008));
+    ctx.fillRect(X(x), Y(PLAY_H), dashW, S(0.008));
   }
 
-  // Paredes laterales
-  ctx.fillRect(X(0) - S(0.008), Y(0), S(0.008), S(COURT_H));
-  ctx.fillRect(X(COURT_W), Y(0), S(0.008), S(COURT_H));
-
-  // Marcador: rival arriba, yo abajo
-  ctx.globalAlpha = 0.85;
-  drawNumber(state.score.opp, X(0.5), Y(0.12), S(0.022));
-  drawNumber(state.score.me, X(0.5), Y(COURT_H - 0.26), S(0.022));
-  ctx.globalAlpha = 1;
-
-  // Paleta
+  // Paleta, apoyada sobre la línea
   ctx.fillRect(X(state.paddleX - PADDLE_W / 2), Y(PADDLE_Y), S(PADDLE_W), S(PADDLE_H));
 
-  // Bola
+  // Bola (por arriba simplemente se pierde hacia la pantalla del rival)
   if (state.ball) {
     ctx.fillRect(X(state.ball.x), Y(state.ball.y), S(BALL_SIZE), S(BALL_SIZE));
   }
 
-  // Avisos de estado (parpadean como en las recreativas)
-  const blinkOn = Math.floor(now / 500) % 2 === 0;
-  ctx.font = `${Math.round(S(0.035))}px "Courier New", monospace`;
-  ctx.textAlign = 'center';
-  if (state.resuming || !state.ws) {
-    if (blinkOn) ctx.fillText('RECONECTANDO...', X(0.5), Y(0.35));
-  } else if (state.peerAway) {
-    if (blinkOn) ctx.fillText('ESPERA: TU RIVAL VUELVE ENSEGUIDA', X(0.5), Y(0.35));
-  } else if (!state.ball && !state.serveMsg) {
-    if (blinkOn) ctx.fillText('· BOLA EN CAMPO RIVAL ·', X(0.5), Y(0.35));
-  }
+  // ---- Zona de información: el quinto inferior, bajo la línea ----
 
-  // Mensaje de saque
-  if (state.serveMsg) {
-    if (now > state.serveMsg.until) {
-      state.serveMsg = null;
-    } else {
-      ctx.font = `bold ${Math.round(S(0.05))}px "Courier New", monospace`;
-      ctx.textAlign = 'center';
-      ctx.fillText(state.serveMsg.text, X(0.5), Y(0.75));
-    }
+  // Marcador: TU a la izquierda, RIVAL a la derecha
+  ctx.font = `${Math.round(S(0.028))}px "Courier New", monospace`;
+  ctx.textAlign = 'center';
+  ctx.globalAlpha = 0.7;
+  ctx.fillText('TU', X(0.28), Y(PLAY_H + 0.06));
+  ctx.fillText('RIVAL', X(0.72), Y(PLAY_H + 0.06));
+  ctx.globalAlpha = 1;
+  drawNumber(state.score.me, X(0.28), Y(PLAY_H + 0.09), S(0.02));
+  drawNumber(state.score.opp, X(0.72), Y(PLAY_H + 0.09), S(0.02));
+
+  // Estado de la partida (parpadea como en las recreativas)
+  const blinkOn = Math.floor(now / 500) % 2 === 0;
+  const statusY = Y(PLAY_H + 0.27);
+  if (state.serveMsg && now > state.serveMsg.until) state.serveMsg = null;
+  ctx.font = `${Math.round(S(0.033))}px "Courier New", monospace`;
+  if (state.resuming || !state.ws) {
+    if (blinkOn) ctx.fillText('RECONECTANDO...', X(0.5), statusY);
+  } else if (state.peerAway) {
+    if (blinkOn) ctx.fillText('ESPERA: TU RIVAL VUELVE ENSEGUIDA', X(0.5), statusY);
+  } else if (state.serveMsg) {
+    ctx.font = `bold ${Math.round(S(0.04))}px "Courier New", monospace`;
+    ctx.fillText(state.serveMsg.text, X(0.5), statusY);
+  } else if (!state.ball) {
+    if (blinkOn) ctx.fillText('· BOLA EN CAMPO RIVAL ·', X(0.5), statusY);
   }
 }
 
