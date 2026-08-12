@@ -17,6 +17,21 @@
   <div id="menu" class="screen">
     <h1 class="title">PONG</h1>
     <p class="subtitle">1972 &middot; TWO PHONES &middot; ONE TABLE</p>
+    <div class="opt-row">
+      <span class="opt-label">TIME</span>
+      <button class="opt-btn" data-min="1">1</button>
+      <button class="opt-btn" data-min="2">2</button>
+      <button class="opt-btn" data-min="3">3</button>
+      <button class="opt-btn sel" data-min="4">4</button>
+      <span class="opt-unit">MIN</span>
+    </div>
+    <div class="opt-row">
+      <span class="opt-label">BALLS</span>
+      <button class="opt-btn sel" data-balls="1">1</button>
+      <button class="opt-btn" data-balls="2">2</button>
+      <button class="opt-btn" data-balls="3">3</button>
+      <span class="opt-unit"></span>
+    </div>
     <button id="btn-create" class="btn">CREATE GAME</button>
     <p class="hint">Create a game and share the link<br>with your rival, wherever they are.</p>
     <p id="menu-error" class="error"></p>
