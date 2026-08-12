@@ -36,9 +36,18 @@ const WIN_SCORE = 11;
 // ---------------------------------------------------------------------------
 
 const state = {
-  phase: 'menu',            // menu | waiting | playing | over
+  phase: 'menu',            // menu | joining | waiting | playing | over
   role: null,               // host | guest
   ws: null,
+
+  code: null,               // código de la sala (viaja en el enlace)
+  token: null,              // token secreto para reanudar tras una desconexión
+  shareUrl: null,
+  resuming: false,
+  reconnectTries: 0,
+  reconnectTimer: null,
+  peerAway: false,          // el rival está en segundo plano / reconectando
+  pendingServe: false,
 
   paddleX: 0.5,
   ball: null,               // {x, y, vx, vy} o null si está en campo rival
@@ -49,6 +58,26 @@ const state = {
   myRematch: false,
   theirRematch: false
 };
+
+// Para sobrevivir a que el navegador recargue la página al volver de otra app
+function saveSession() {
+  try {
+    sessionStorage.setItem('pong_resume',
+      JSON.stringify({ code: state.code, token: state.token, ts: Date.now() }));
+  } catch { /* modo privado, da igual */ }
+}
+
+function clearSession() {
+  try { sessionStorage.removeItem('pong_resume'); } catch { /* ignorar */ }
+}
+
+function loadSession() {
+  try {
+    const s = JSON.parse(sessionStorage.getItem('pong_resume'));
+    if (s && s.code && s.token && Date.now() - s.ts < 3 * 60 * 1000) return s;
+  } catch { /* ignorar */ }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // DOM
@@ -110,13 +139,35 @@ function connect(onOpen) {
     handleMessage(msg);
   };
   ws.onclose = () => {
-    if (state.phase === 'playing') {
-      endGame('SIN CONEXION', 'Se perdio la conexion con el servidor.');
-    } else if (state.phase === 'joining' || state.phase === 'waiting') {
+    state.ws = null;
+    if (state.phase === 'menu') return;
+
+    // Primer intento de unirse fallido, sin token aún: volver al menú
+    if (!state.token) {
       backToMenu();
       el('menu-error').textContent = 'SIN CONEXION. INTENTALO DE NUEVO';
+      return;
     }
+
+    // En cualquier otra fase: intentar reanudar (el móvil corta el
+    // WebSocket al pasar a segundo plano, p. ej. al compartir el enlace)
+    state.reconnectTries += 1;
+    if (state.reconnectTries > 50) {
+      clearSession();
+      backToMenu();
+      el('menu-error').textContent = 'SIN CONEXION. INTENTALO DE NUEVO';
+      return;
+    }
+    clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = setTimeout(tryResume, state.reconnectTries === 1 ? 150 : 2500);
   };
+}
+
+function tryResume() {
+  if (state.phase === 'menu' || !state.token || !state.code) return;
+  if (state.ws && state.ws.readyState <= WebSocket.OPEN) return; // ya hay conexión
+  state.resuming = true;
+  connect(() => sendMsg({ type: 'resume', code: state.code, token: state.token }));
 }
 
 function sendMsg(msg) {
@@ -129,6 +180,9 @@ function handleMessage(msg) {
   switch (msg.type) {
     case 'created': {
       // El rival se une abriendo este enlace (el código viaja en la URL)
+      state.code = msg.code;
+      state.token = msg.token;
+      saveSession();
       const url = `${location.origin}${location.pathname}?j=${msg.code}`;
       state.shareUrl = url;
       el('share-url').textContent = url;
@@ -139,17 +193,55 @@ function handleMessage(msg) {
       break;
     }
 
-    case 'error':
+    case 'error': {
+      const wasResuming = state.resuming;
+      clearSession();
       backToMenu();
       el('menu-error').textContent =
-        msg.reason === 'full'
-          ? 'ESA PARTIDA YA ESTA LLENA'
-          : 'PARTIDA NO ENCONTRADA. PIDE UN ENLACE NUEVO';
+        wasResuming ? 'LA PARTIDA SE PERDIO. CREA OTRA'
+        : msg.reason === 'full' ? 'ESA PARTIDA YA ESTA LLENA'
+        : 'PARTIDA NO ENCONTRADA. PIDE UN ENLACE NUEVO';
       break;
+    }
 
     case 'start':
       state.role = msg.role;
+      if (msg.code) state.code = msg.code;
+      if (msg.token) state.token = msg.token;
+      saveSession();
       startMatch();
+      break;
+
+    case 'resumed':
+      state.resuming = false;
+      state.reconnectTries = 0;
+      state.role = msg.role;
+      saveSession();
+      if (!msg.started && (state.phase === 'waiting' || state.phase === 'joining')) {
+        // Seguimos esperando al rival: reconstruir la pantalla del enlace
+        // (puede que el navegador haya recargado la página)
+        state.shareUrl = `${location.origin}${location.pathname}?j=${state.code}`;
+        el('share-url').textContent = state.shareUrl;
+        el('btn-share').classList.toggle('hidden', !navigator.share);
+        state.phase = 'waiting';
+        showScreen('waiting');
+      } else if (msg.started && state.phase === 'playing') {
+        showScreen(null);
+      }
+      // Si la partida empezó mientras estábamos fuera, el 'start' encolado
+      // llega justo después y arranca el juego solo.
+      break;
+
+    case 'peer_away':
+      state.peerAway = true;
+      break;
+
+    case 'peer_back':
+      state.peerAway = false;
+      if (state.pendingServe && state.phase === 'playing') {
+        state.pendingServe = false;
+        scheduleServe();
+      }
       break;
 
     case 'ball':
@@ -171,10 +263,11 @@ function handleMessage(msg) {
       break;
 
     case 'peer_left':
+      clearSession();
       if (state.phase === 'playing' || state.phase === 'over') {
         endGame('RIVAL DESCONECTADO', 'Tu rival abandono la partida.');
         el('btn-rematch').classList.add('hidden');
-      } else if (state.phase === 'waiting') {
+      } else if (state.phase === 'waiting' || state.phase === 'joining') {
         backToMenu();
       }
       break;
@@ -192,6 +285,8 @@ function startMatch() {
   state.paddleX = 0.5;
   state.myRematch = false;
   state.theirRematch = false;
+  state.pendingServe = false;
+  saveSession();
   el('btn-rematch').classList.remove('hidden');
   showScreen(null);
   keepAwake();
@@ -209,6 +304,11 @@ function scheduleServe() {
   clearTimeout(state.serveTimer);
   state.serveTimer = setTimeout(() => {
     if (state.phase !== 'playing') return;
+    if (state.peerAway) {
+      // No sacar contra un rival que no está mirando: esperar a que vuelva
+      state.pendingServe = true;
+      return;
+    }
     // El saque sale desde tu campo hacia el rival, como en el tenis de mesa real
     const angle = (Math.random() * 0.6 - 0.3); // vx aleatorio suave
     state.ball = {
@@ -248,6 +348,7 @@ function checkWin() {
 
 function endGame(title, detail) {
   clearTimeout(state.serveTimer);
+  clearSession();
   state.phase = 'over';
   state.ball = null;
   el('over-title').textContent = title;
@@ -266,13 +367,22 @@ function tryRematch() {
 
 function backToMenu() {
   clearTimeout(state.serveTimer);
+  clearTimeout(state.reconnectTimer);
+  clearSession();
   if (state.ws) {
     state.ws.onclose = null;
+    sendMsg({ type: 'leave' }); // que el rival no espere el periodo de gracia
     state.ws.close();
     state.ws = null;
   }
   state.phase = 'menu';
   state.ball = null;
+  state.code = null;
+  state.token = null;
+  state.resuming = false;
+  state.reconnectTries = 0;
+  state.peerAway = false;
+  state.pendingServe = false;
   el('menu-error').textContent = '';
   showScreen('menu');
 }
@@ -414,13 +524,18 @@ function render(now) {
   // Bola
   if (state.ball) {
     ctx.fillRect(X(state.ball.x), Y(state.ball.y), S(BALL_SIZE), S(BALL_SIZE));
-  } else if (!state.serveMsg) {
-    // La bola está en el campo del rival
-    ctx.font = `${Math.round(S(0.035))}px "Courier New", monospace`;
-    ctx.textAlign = 'center';
-    if (Math.floor(now / 500) % 2 === 0) {
-      ctx.fillText('· BOLA EN CAMPO RIVAL ·', X(0.5), Y(0.35));
-    }
+  }
+
+  // Avisos de estado (parpadean como en las recreativas)
+  const blinkOn = Math.floor(now / 500) % 2 === 0;
+  ctx.font = `${Math.round(S(0.035))}px "Courier New", monospace`;
+  ctx.textAlign = 'center';
+  if (state.resuming || !state.ws) {
+    if (blinkOn) ctx.fillText('RECONECTANDO...', X(0.5), Y(0.35));
+  } else if (state.peerAway) {
+    if (blinkOn) ctx.fillText('ESPERA: TU RIVAL VUELVE ENSEGUIDA', X(0.5), Y(0.35));
+  } else if (!state.ball && !state.serveMsg) {
+    if (blinkOn) ctx.fillText('· BOLA EN CAMPO RIVAL ·', X(0.5), Y(0.35));
   }
 
   // Mensaje de saque
@@ -444,7 +559,8 @@ let lastTime = 0;
 function loop(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
-  if (state.phase === 'playing') stepBall(dt);
+  // El juego se pausa mientras el rival está en segundo plano o reconectando
+  if (state.phase === 'playing' && !state.peerAway && !state.resuming) stepBall(dt);
   render(now);
   requestAnimationFrame(loop);
 }
@@ -521,11 +637,31 @@ resize();
 
 // Si la página se abrió con un enlace de partida (?j=CODIGO), unirse directamente
 const joinCode = new URLSearchParams(location.search).get('j');
+const savedSession = loadSession();
 if (joinCode) {
   history.replaceState(null, '', location.pathname); // no re-unirse al recargar
+  clearSession();
   state.phase = 'joining';
   showScreen('joining');
   connect(() => sendMsg({ type: 'join', code: joinCode }));
+} else if (savedSession) {
+  // El navegador recargó la página (p. ej. al volver de WhatsApp):
+  // recuperar la partida en curso
+  state.code = savedSession.code;
+  state.token = savedSession.token;
+  state.phase = 'joining';
+  showScreen('joining');
+  state.resuming = true;
+  connect(() => sendMsg({ type: 'resume', code: state.code, token: state.token }));
 }
+
+// Al volver a primer plano, reconectar sin esperar al siguiente reintento
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state.token && state.phase !== 'menu' &&
+      (!state.ws || state.ws.readyState > WebSocket.OPEN)) {
+    clearTimeout(state.reconnectTimer);
+    tryResume();
+  }
+});
 
 requestAnimationFrame((t) => { lastTime = t; requestAnimationFrame(loop); });
