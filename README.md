@@ -25,7 +25,7 @@ over the internet. Very simple, very old fashioned: black, white and *beeps*.
   sad face**. The **score is shared** and shown on both phones.
 - Serves leave **from the server's paddle**; whoever misses a ball serves
   it again. With multiple balls, the opening volley launches them one at
-  a time, **3 seconds apart**.
+  a time, **1 second apart**.
 - Controls: **drag your finger** across the screen to move your paddle.
 - If a phone leaves the browser for any reason (sharing the link, a call,
   a notification, the browser being killed or even reloaded) the game
