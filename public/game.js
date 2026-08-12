@@ -41,7 +41,7 @@ const BALL_VX_MAX = 0.9;       // max sideways speed when hit with the edge
 // (?t=SECONDS in the URL overrides the duration — handy for testing.)
 const TEST_SECONDS = Number(new URLSearchParams(location.search).get('t')) || 0;
 const SERVE_DELAY = 1200;      // ms before a serve
-const MULTIBALL_GAP = 3000;    // ms between serves when launching several balls
+const MULTIBALL_GAP = 1000;    // ms between serves when launching several balls
 const URGENT_AT = 30;          // under 30s everything turns red
 const URGENT_COLOR = '#ff2222';
 
