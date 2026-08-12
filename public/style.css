@@ -26,6 +26,29 @@ html, body {
   background: #000;
 }
 
+/* In-game quit button: top-right corner, needs a confirming second tap */
+.quit {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  right: 10px;
+  z-index: 5;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 2px;
+  background: #000;
+  color: #fff;
+  border: 2px solid #fff;
+  padding: 7px 10px;
+  opacity: 0.65;
+  cursor: pointer;
+}
+
+.quit.confirm {
+  background: #fff;
+  color: #000;
+  opacity: 1;
+}
+
 .screen {
   position: fixed;
   inset: 0;
