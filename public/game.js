@@ -71,6 +71,7 @@ const state = {
   servesPending: 0,         // balls I still owe a serve for
   serveTimer: null,
   serveMsg: null,           // {text, until}
+  quitTimer: null,          // reverts the QUIT button's SURE? state
 
   config: { seconds: 240, balls: 1 },  // set by the server on 'start'/'resumed'
   optMinutes: 4,            // menu selections (host only)
@@ -116,6 +117,15 @@ const ctx = canvas.getContext('2d');
 
 const el = (id) => document.getElementById(id);
 const screens = { menu: el('menu'), waiting: el('waiting'), joining: el('joining'), over: el('over') };
+
+// The in-game QUIT button lives outside the screen overlays
+function setQuitVisible(visible) {
+  const btn = el('btn-quit');
+  btn.classList.toggle('hidden', !visible);
+  btn.classList.remove('confirm');
+  btn.textContent = 'QUIT';
+  clearTimeout(state.quitTimer);
+}
 
 function showScreen(name) {
   for (const key of Object.keys(screens)) {
@@ -261,6 +271,7 @@ function handleMessage(msg) {
         state.lastBallEvent = performance.now();
         el('btn-rematch').classList.remove('hidden');
         showScreen(null);
+        setQuitVisible(true);
         keepAwake();
         // If the match started while we were away, the queued 'start'
         // arrives right after this and (re)kicks the serve flow itself.
@@ -363,6 +374,7 @@ function startMatch() {
   saveSession();
   el('btn-rematch').classList.remove('hidden');
   showScreen(null);
+  setQuitVisible(true);
   keepAwake();
 
   // The host launches every ball of the opening volley
@@ -423,6 +435,7 @@ function concedeGoal() {
 function endByTime() {
   clearTimeout(state.serveTimer);
   state.serveTimer = null;
+  setQuitVisible(false);
   clearSession();
   state.phase = 'over';
   state.balls = [];
@@ -458,6 +471,7 @@ function endByTime() {
 function endGame(title, detail) {
   clearTimeout(state.serveTimer);
   state.serveTimer = null;
+  setQuitVisible(false);
   clearSession();
   state.phase = 'over';
   state.balls = [];
@@ -481,6 +495,7 @@ function tryRematch() {
 function backToMenu() {
   clearTimeout(state.serveTimer);
   clearTimeout(state.reconnectTimer);
+  setQuitVisible(false);
   clearSession();
   if (state.ws) {
     state.ws.onclose = null;
@@ -889,6 +904,23 @@ el('btn-copy').addEventListener('click', async () => {
 
 el('btn-cancel').addEventListener('click', backToMenu);
 el('btn-exit').addEventListener('click', backToMenu);
+
+// In-game QUIT: the first tap asks for confirmation (so a stray finger
+// doesn't kill the match), the second tap within 2s really quits.
+el('btn-quit').addEventListener('click', () => {
+  const btn = el('btn-quit');
+  if (!btn.classList.contains('confirm')) {
+    btn.classList.add('confirm');
+    btn.textContent = 'SURE?';
+    clearTimeout(state.quitTimer);
+    state.quitTimer = setTimeout(() => {
+      btn.classList.remove('confirm');
+      btn.textContent = 'QUIT';
+    }, 2000);
+    return;
+  }
+  backToMenu(); // sends 'leave': the rival is told right away
+});
 
 el('btn-rematch').addEventListener('click', () => {
   state.myRematch = true;
