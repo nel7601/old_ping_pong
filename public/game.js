@@ -35,7 +35,13 @@ const BALL_SPEEDUP = 1.05;     // acceleration per paddle hit
 const BALL_SPEED_MAX = 2.2;
 const BALL_VX_MAX = 0.9;       // max sideways speed when hit with the edge
 
-const WIN_SCORE = 11;
+// A match lasts 4 minutes; whoever leads when time runs out wins.
+// (?t=SECONDS in the URL overrides it — handy for testing.)
+const GAME_SECONDS = Number(new URLSearchParams(location.search).get('t')) || 240;
+const URGENT_AT = 30;          // under 30s everything turns red
+const URGENT_COLOR = '#ff2222';
+
+const CONFETTI_COLORS = ['#ff4040', '#ffd700', '#40c4ff', '#7cfc00', '#ff80ff', '#ffa500'];
 
 // ---------------------------------------------------------------------------
 // State
@@ -63,7 +69,11 @@ const state = {
 
   score: { me: 0, opp: 0 },
   myRematch: false,
-  theirRematch: false
+  theirRematch: false,
+
+  timeLeft: null,           // seconds remaining; null = waiting for a clock sync
+  timeUpSent: false,        // host only: 'time_up' already emitted
+  result: null              // {won, tie, confetti[], lastNow} end-of-match scene
 };
 
 // Survive the browser being reloaded, killed or reopened in a new tab:
@@ -261,9 +271,20 @@ function handleMessage(msg) {
     case 'peer_back':
       state.peerAway = false;
       state.lastBallEvent = performance.now();
+      // Help a rival who just reloaded recover the match clock
+      if (state.phase === 'playing' && state.timeLeft !== null) {
+        sendMsg({ type: 'clock', t: state.timeLeft });
+      }
       if (state.pendingServe && state.phase === 'playing') {
         state.pendingServe = false;
         scheduleServe();
+      }
+      break;
+
+    case 'clock':
+      if (typeof msg.t === 'number' &&
+          (state.timeLeft === null || Math.abs(state.timeLeft - msg.t) > 3)) {
+        state.timeLeft = msg.t;
       }
       break;
 
@@ -271,6 +292,8 @@ function handleMessage(msg) {
       // The ball enters through the top of my screen (already mirrored by the rival)
       state.ball = { x: msg.x, y: -BALL_SIZE, vx: msg.vx, vy: msg.vy };
       state.lastBallEvent = performance.now();
+      // The host's clock rides along on its messages: the guest adopts it
+      if (state.role === 'guest' && typeof msg.t === 'number') state.timeLeft = msg.t;
       break;
 
     case 'goal':
@@ -278,8 +301,15 @@ function handleMessage(msg) {
       state.score.me = msg.scorer;
       state.score.opp = msg.conceder;
       state.lastBallEvent = performance.now();
+      if (state.role === 'guest' && typeof msg.t === 'number') state.timeLeft = msg.t;
       sndScore();
-      checkWin();
+      break;
+
+    case 'time_up':
+      // The host's whistle: the 4 minutes are over. Adopt its final score.
+      state.score.me = msg.theirs;
+      state.score.opp = msg.mine;
+      endByTime();
       break;
 
     case 'rematch':
@@ -312,6 +342,10 @@ function startMatch() {
   state.theirRematch = false;
   state.pendingServe = false;
   state.lastBallEvent = performance.now();
+  state.timeLeft = GAME_SECONDS;
+  state.timeUpSent = false;
+  state.result = null;
+  el('over').classList.remove('result');
   saveSession();
   el('btn-rematch').classList.remove('hidden');
   showScreen(null);
@@ -356,29 +390,54 @@ function concedeGoal() {
   state.score.opp += 1;
   state.lastBallEvent = performance.now();
   sndScore();
-  sendMsg({ type: 'goal', scorer: state.score.opp, conceder: state.score.me });
-  if (!checkWin()) {
-    scheduleServe(); // whoever misses serves again
-  }
+  const goal = { type: 'goal', scorer: state.score.opp, conceder: state.score.me };
+  if (state.role === 'host' && state.timeLeft !== null) goal.t = state.timeLeft;
+  sendMsg(goal);
+  scheduleServe(); // whoever misses serves again
 }
 
-function checkWin() {
-  if (state.score.me >= WIN_SCORE) {
-    endGame('YOU WIN', `${state.score.me} - ${state.score.opp}`);
-    return true;
-  }
-  if (state.score.opp >= WIN_SCORE) {
-    endGame('YOU LOSE', `${state.score.opp} - ${state.score.me}`);
-    return true;
-  }
-  return false;
+// Match over by clock: the result is drawn INSIDE the play area
+// (confetti for the winner, a pixel sad face for the loser).
+function endByTime() {
+  clearTimeout(state.serveTimer);
+  clearSession();
+  state.phase = 'over';
+  state.ball = null;
+  state.timeLeft = 0;
+  const tie = state.score.me === state.score.opp;
+  const won = state.score.me > state.score.opp;
+  state.result = {
+    won,
+    tie,
+    lastNow: performance.now(),
+    confetti: won ? Array.from({ length: 90 }, () => ({
+      x: Math.random(),
+      y: -Math.random() * PLAY_H,
+      vx: (Math.random() - 0.5) * 0.25,
+      vy: 0.25 + Math.random() * 0.55,
+      size: 0.01 + Math.random() * 0.012,
+      color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+      wobble: Math.random() * Math.PI * 2
+    })) : null
+  };
+  sndScore();
+  // Show only the buttons, at the bottom: the canvas is the show now
+  el('over-title').textContent = '';
+  el('over-detail').textContent = '';
+  el('btn-rematch').textContent = 'REMATCH';
+  el('over').classList.add('result');
+  showScreen('over');
 }
 
+// Match over for a sad, non-sporting reason (disconnect, lost server):
+// the classic full-screen message
 function endGame(title, detail) {
   clearTimeout(state.serveTimer);
   clearSession();
   state.phase = 'over';
   state.ball = null;
+  state.result = null;
+  el('over').classList.remove('result');
   el('over-title').textContent = title;
   el('over-detail').textContent = detail;
   el('btn-rematch').textContent = 'REMATCH';
@@ -411,6 +470,9 @@ function backToMenu() {
   state.reconnectTries = 0;
   state.peerAway = false;
   state.pendingServe = false;
+  state.result = null;
+  state.timeLeft = null;
+  el('over').classList.remove('result');
   el('menu-error').textContent = '';
   showScreen('menu');
 }
@@ -453,12 +515,14 @@ function stepBall(dt) {
 
   // Off the top: over to the rival's phone (mirrored, we face each other)
   if (b.y + BALL_SIZE < 0) {
-    sendMsg({
+    const pass = {
       type: 'ball',
       x: COURT_W - b.x - BALL_SIZE,
       vx: -b.vx,
       vy: -b.vy
-    });
+    };
+    if (state.role === 'host' && state.timeLeft !== null) pass.t = state.timeLeft;
+    sendMsg(pass);
     state.ball = null;
     state.lastBallEvent = performance.now();
     return;
@@ -524,12 +588,99 @@ const X = (u) => view.ox + u * view.scale;
 const Y = (u) => view.oy + u * view.scale;
 const S = (u) => u * view.scale;
 
+// M:SS with the same pixel-block digits as the score, colon included
+function drawTimer(seconds, cx, top, px) {
+  const s = Math.max(0, Math.ceil(seconds));
+  const mm = Math.floor(s / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  // widths in px cells: minute 3, gap 1, colon 1, gap 1, two digits 3+1+3
+  const totalW = (3 + 1 + 1 + 1 + 3 + 1 + 3) * px;
+  let x = cx - totalW / 2;
+  drawNumber(mm, x + 1.5 * px, top, px);
+  x += 4 * px;
+  ctx.fillRect(Math.round(x), Math.round(top + px), Math.ceil(px), Math.ceil(px));
+  ctx.fillRect(Math.round(x), Math.round(top + 3 * px), Math.ceil(px), Math.ceil(px));
+  x += 2 * px;
+  drawNumber(Number(ss[0]), x + 1.5 * px, top, px);
+  x += 4 * px;
+  drawNumber(Number(ss[1]), x + 1.5 * px, top, px);
+}
+
+// 11x11 pixel sad face for the loser, 1972 style
+const SAD_FACE = [
+  '...#####...',
+  '..#.....#..',
+  '.#.......#.',
+  '#..#...#..#',
+  '#..#...#..#',
+  '#.........#',
+  '#...###...#',
+  '#..#...#..#',
+  '.#.......#.',
+  '..#.....#..',
+  '...#####...'
+];
+
+function drawBitmap(rows, cx, top, px) {
+  const w = rows[0].length * px;
+  const x0 = cx - w / 2;
+  for (let r = 0; r < rows.length; r++) {
+    for (let c = 0; c < rows[r].length; c++) {
+      if (rows[r][c] === '#') {
+        ctx.fillRect(Math.round(x0 + c * px), Math.round(top + r * px), Math.ceil(px), Math.ceil(px));
+      }
+    }
+  }
+}
+
+// End-of-match scene, drawn inside the play area
+function drawResult(now) {
+  const res = state.result;
+  const dt = Math.min((now - res.lastNow) / 1000, 0.05);
+  res.lastNow = now;
+
+  ctx.textAlign = 'center';
+  if (res.tie) {
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${Math.round(S(0.1))}px "Courier New", monospace`;
+    ctx.fillText('DRAW', X(0.5), Y(PLAY_H / 2));
+  } else if (res.won) {
+    // Colored confetti raining over the winner's court
+    for (const p of res.confetti) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.wobble += dt * 6;
+      if (p.y > PLAY_H) {  // recycle at the top
+        p.y = -0.05;
+        p.x = Math.random();
+      }
+      if (p.y < 0) continue;
+      ctx.fillStyle = p.color;
+      const w = p.size * (0.6 + 0.4 * Math.abs(Math.sin(p.wobble)));
+      ctx.fillRect(X(p.x), Y(p.y), S(w), S(p.size));
+    }
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${Math.round(S(0.11))}px "Courier New", monospace`;
+    ctx.fillText('WINNER', X(0.5), Y(PLAY_H / 2));
+  } else {
+    ctx.fillStyle = '#fff';
+    drawBitmap(SAD_FACE, X(0.5), Y(0.28), S(0.032));
+    ctx.font = `bold ${Math.round(S(0.09))}px "Courier New", monospace`;
+    ctx.fillText('YOU LOST', X(0.5), Y(0.95));
+  }
+}
+
 function render(now) {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (state.phase !== 'playing') return;
+  const active = state.phase === 'playing';
+  const ended = state.phase === 'over' && state.result;
+  if (!active && !ended) return;
 
-  ctx.fillStyle = '#fff';
+  // Under 30 seconds everything turns red: line, paddle, ball, score...
+  const urgent = active && state.timeLeft !== null && state.timeLeft < URGENT_AT;
+  const color = urgent ? URGENT_COLOR : '#fff';
+  ctx.fillStyle = color;
 
   // Side walls of the active area (the top 4/5)
   ctx.fillRect(X(0) - S(0.008), Y(0), S(0.008), S(PLAY_H));
@@ -541,25 +692,36 @@ function render(now) {
     ctx.fillRect(X(x), Y(PLAY_H), dashW, S(0.008));
   }
 
-  // Paddle, resting on the line
-  ctx.fillRect(X(state.paddleX - PADDLE_W / 2), Y(PADDLE_Y), S(PADDLE_W), S(PADDLE_H));
+  if (active) {
+    // Paddle, resting on the line
+    ctx.fillRect(X(state.paddleX - PADDLE_W / 2), Y(PADDLE_Y), S(PADDLE_W), S(PADDLE_H));
 
-  // Ball (off the top it simply flies into the rival's screen)
-  if (state.ball) {
-    ctx.fillRect(X(state.ball.x), Y(state.ball.y), S(BALL_SIZE), S(BALL_SIZE));
+    // Ball (off the top it simply flies into the rival's screen)
+    if (state.ball) {
+      ctx.fillRect(X(state.ball.x), Y(state.ball.y), S(BALL_SIZE), S(BALL_SIZE));
+    }
   }
 
   // ---- Info zone: the bottom fifth, below the line ----
 
-  // Score: YOU on the left, RIVAL on the right
+  // Score: YOU on the left, RIVAL on the right, clock in the middle
   ctx.font = `${Math.round(S(0.028))}px "Courier New", monospace`;
   ctx.textAlign = 'center';
   ctx.globalAlpha = 0.7;
   ctx.fillText('YOU', X(0.28), Y(PLAY_H + 0.06));
+  ctx.fillText('TIME', X(0.5), Y(PLAY_H + 0.06));
   ctx.fillText('RIVAL', X(0.72), Y(PLAY_H + 0.06));
   ctx.globalAlpha = 1;
   drawNumber(state.score.me, X(0.28), Y(PLAY_H + 0.09), S(0.02));
   drawNumber(state.score.opp, X(0.72), Y(PLAY_H + 0.09), S(0.02));
+  if (state.timeLeft !== null) {
+    drawTimer(state.timeLeft, X(0.5), Y(PLAY_H + 0.09), S(0.02));
+  }
+
+  if (ended) {
+    drawResult(now);
+    return;
+  }
 
   // Match status (blinks like the old arcades)
   const blinkOn = Math.floor(now / 500) % 2 === 0;
@@ -588,7 +750,19 @@ function loop(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
   // The game pauses while the rival is in the background or reconnecting
-  if (state.phase === 'playing' && !state.peerAway && !state.resuming) stepBall(dt);
+  const running = state.phase === 'playing' && !state.peerAway && !state.resuming;
+  if (running) stepBall(dt);
+
+  // Match clock: counts down only while both players are present.
+  // The host is the referee: it blows the final whistle for both.
+  if (running && state.timeLeft !== null) {
+    state.timeLeft = Math.max(0, state.timeLeft - dt);
+    if (state.timeLeft <= 0 && state.role === 'host' && !state.timeUpSent) {
+      state.timeUpSent = true;
+      sendMsg({ type: 'time_up', mine: state.score.me, theirs: state.score.opp });
+      endByTime();
+    }
+  }
 
   // Ball watchdog: if the ball has been "on the rival side" suspiciously
   // long with both players present, it got lost in a disconnect (e.g. it
@@ -720,3 +894,6 @@ setInterval(() => {
 }, 20000);
 
 requestAnimationFrame((t) => { lastTime = t; requestAnimationFrame(loop); });
+
+// Exposed for automated tests; not part of the game logic
+window.__pong = state;

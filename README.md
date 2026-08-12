@@ -17,8 +17,11 @@ over the internet. Very simple, very old fashioned: black, white and *beeps*.
   status), separated by a dashed line with your paddle resting on it. When
   the ball flies off the top of your screen, it **enters your rival's
   screen**.
-- The **score is shared** and shown on both phones. First to **11 points**
-  wins. Whoever misses serves next.
+- A match lasts **4 minutes**, with the remaining time shown between the
+  two scores. Under **30 seconds** everything on screen turns **red**.
+  Whoever leads when the clock hits zero wins: the winner's court fills
+  with **colored confetti**, the loser gets a **pixel sad face**. The
+  **score is shared** and shown on both phones; whoever misses serves next.
 - Controls: **drag your finger** across the screen to move your paddle.
 - If a phone leaves the browser for any reason (sharing the link, a call,
   a notification, the browser being killed or even reloaded) the game

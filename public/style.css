@@ -44,6 +44,14 @@ html, body {
   display: none;
 }
 
+/* End-of-match mode: the canvas shows the result (confetti / sad face),
+   the overlay only contributes the buttons at the bottom */
+.screen.result {
+  background: transparent;
+  justify-content: flex-end;
+  padding-bottom: 7vh;
+}
+
 .title {
   font-size: 64px;
   letter-spacing: 12px;
